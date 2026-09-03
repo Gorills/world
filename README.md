@@ -214,4 +214,4 @@ Legacy focused solver paths remain available:
 
 ## Next bounded milestone
 
-With compound ownership/checkpointing established, the next architecture-level hydrology limitation is persistent in-channel travel time. A future channel-routing state must be conserved, participate in L0/L1 ownership, advance on the same global clock and become another versioned section of the unified checkpoint rather than an independently saved subsystem.
+With compound ownership/checkpointing established, the next architecture-level hydrology limitation is persistent in-channel travel time. The next slice should keep channel storage inside `MultiresolutionWaterState`, conserve it across L0/L1 routing boundaries, advance it on the same global clock and persist it through the existing Multiresolution Water checkpoint section rather than creating another independently coordinated authority.
