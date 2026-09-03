@@ -1,10 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(worldsim VERSION 0.6.0 LANGUAGES C CXX)
+project(worldsim VERSION 0.7.0 LANGUAGES C CXX)
 
 option(WORLDSIM_BUILD_TESTS "Build WorldSim tests" ON)
 
 add_library(worldsim
     src/world.cpp
+    src/soil.cpp
     src/hydrology.cpp
     src/continental_hydrology.cpp
     src/dynamic_hydrology.cpp
@@ -13,6 +14,7 @@ add_library(worldsim
     src/multiresolution_water_persistence.cpp
     src/persistence.cpp
     src/c_api.cpp
+    src/soil_c_api.cpp
     src/multiresolution_water_c_api.cpp
 )
 add_library(worldsim::worldsim ALIAS worldsim)
@@ -44,6 +46,10 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_tests COMMAND worldsim_tests)
 
+    add_executable(worldsim_soil_tests tests/test_soil.cpp)
+    target_link_libraries(worldsim_soil_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_soil_tests COMMAND worldsim_soil_tests)
+
     add_executable(worldsim_continental_water_tests tests/test_continental_water.cpp)
     target_link_libraries(worldsim_continental_water_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_continental_water_tests COMMAND worldsim_continental_water_tests)
@@ -74,6 +80,11 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_c_api_tests PRIVATE worldsim::worldsim)
     set_target_properties(worldsim_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
     add_test(NAME worldsim_c_api_tests COMMAND worldsim_c_api_tests)
+
+    add_executable(worldsim_soil_c_api_tests tests/test_soil_c_api.c)
+    target_link_libraries(worldsim_soil_c_api_tests PRIVATE worldsim::worldsim)
+    set_target_properties(worldsim_soil_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
+    add_test(NAME worldsim_soil_c_api_tests COMMAND worldsim_soil_c_api_tests)
 
     add_executable(worldsim_multiresolution_water_c_api_tests
         tests/test_multiresolution_water_c_api.c)
