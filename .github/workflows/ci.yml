@@ -55,3 +55,14 @@ jobs:
           ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --test-dir build-sanitize --output-on-failure
+
+  windows-shared:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure shared MSVC build
+        run: cmake -S . -B build -DBUILD_SHARED_LIBS=ON -DCMAKE_C_FLAGS=/WX -DCMAKE_CXX_FLAGS=/WX
+      - name: Build
+        run: cmake --build build --config Release
+      - name: Test shared library consumers
+        run: ctest --test-dir build -C Release --output-on-failure
