@@ -48,7 +48,9 @@ int ws_world_sample_soil(
     ws_soil_properties* out_properties) {
     return guarded([&] {
         if (!world || !out_properties) throw std::invalid_argument("world/out_properties is null");
-        copy_properties(world->impl.sample_soil({x_m, y_m}), *out_properties);
+        copy_properties(
+            world->impl.sample_soil(worldsim::WorldPosition{x_m, y_m}),
+            *out_properties);
     });
 }
 
