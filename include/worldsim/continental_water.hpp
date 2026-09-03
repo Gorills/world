@@ -86,6 +86,8 @@ private:
     [[nodiscard]] double total_storage_m3() const;
 
     friend class MultiresolutionWaterState;
+    friend MultiresolutionWaterState make_multiresolution_water_state(
+        const World&, const ContinentalHydrologyResult&, const DynamicHydrologyParameters&);
     friend void save_multiresolution_water_state(
         const MultiresolutionWaterState&, const std::filesystem::path&);
     friend MultiresolutionWaterState load_multiresolution_water_state(
