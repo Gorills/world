@@ -106,16 +106,36 @@ std::size_t flat(std::uint32_t x, std::uint32_t y, std::uint32_t width) {
     return static_cast<std::size_t>(y) * static_cast<std::size_t>(width) + x;
 }
 
+void validate_result_shape(const ContinentalHydrologyResult& r) {
+    if (r.width_cells == 0 || r.height_cells == 0) {
+        throw std::invalid_argument("continental hydrology result dimensions must be positive");
+    }
+    const auto expected = static_cast<std::uint64_t>(r.width_cells) *
+                          static_cast<std::uint64_t>(r.height_cells);
+    if (expected > kMaxContinentalHydrologyCells || expected != r.cells.size()) {
+        throw std::invalid_argument("continental hydrology result dimensions do not match cell storage");
+    }
+    const auto x_span = static_cast<std::int64_t>(r.width_cells - 1U);
+    const auto y_span = static_cast<std::int64_t>(r.height_cells - 1U);
+    if (r.min_coord.x > std::numeric_limits<std::int64_t>::max() - x_span ||
+        r.min_coord.y > std::numeric_limits<std::int64_t>::max() - y_span) {
+        throw std::invalid_argument("continental hydrology result coordinate range overflows");
+    }
+}
+
 bool in_continent(CellCoord c, const ContinentalHydrologyResult& r) {
-    const auto max_x = r.min_coord.x + static_cast<std::int64_t>(r.width_cells) - 1;
-    const auto max_y = r.min_coord.y + static_cast<std::int64_t>(r.height_cells) - 1;
-    return c.x >= r.min_coord.x && c.y >= r.min_coord.y && c.x <= max_x && c.y <= max_y;
+    if (c.x < r.min_coord.x || c.y < r.min_coord.y) return false;
+    const auto dx = static_cast<std::uint64_t>(c.x) - static_cast<std::uint64_t>(r.min_coord.x);
+    const auto dy = static_cast<std::uint64_t>(c.y) - static_cast<std::uint64_t>(r.min_coord.y);
+    return dx < static_cast<std::uint64_t>(r.width_cells) &&
+           dy < static_cast<std::uint64_t>(r.height_cells);
 }
 
 std::size_t continent_index(CellCoord c, const ContinentalHydrologyResult& r) {
     if (!in_continent(c, r)) return kNoIndex;
-    return flat(static_cast<std::uint32_t>(c.x - r.min_coord.x),
-                static_cast<std::uint32_t>(c.y - r.min_coord.y), r.width_cells);
+    const auto dx = static_cast<std::uint64_t>(c.x) - static_cast<std::uint64_t>(r.min_coord.x);
+    const auto dy = static_cast<std::uint64_t>(c.y) - static_cast<std::uint64_t>(r.min_coord.y);
+    return flat(static_cast<std::uint32_t>(dx), static_cast<std::uint32_t>(dy), r.width_cells);
 }
 
 CellCoord continent_coord(std::size_t i, const ContinentalHydrologyResult& r) {
@@ -213,6 +233,7 @@ void ContinentalHydrologyRequest::validate() const {
 }
 
 std::size_t ContinentalHydrologyResult::index_of(CellCoord coord) const {
+    validate_result_shape(*this);
     const auto i = continent_index(coord, *this);
     if (i == kNoIndex) throw std::out_of_range("climate coordinate is outside continental hydrology result");
     return i;
