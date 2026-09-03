@@ -146,6 +146,26 @@ int ws_multiresolution_water_is_refined(
     return state->impl.is_refined({climate_x, climate_y}) ? 1 : 0;
 }
 
+int ws_multiresolution_water_channel_storage_m3(
+    const ws_multiresolution_water_state* state,
+    int64_t climate_x,
+    int64_t climate_y,
+    double* out_volume_m3) {
+    return guarded([&] {
+        if (!state || !out_volume_m3) throw std::invalid_argument("state/out_volume_m3 is null");
+        *out_volume_m3 = state->impl.channel_storage_m3({climate_x, climate_y});
+    });
+}
+
+int ws_multiresolution_water_total_channel_storage_m3(
+    const ws_multiresolution_water_state* state,
+    double* out_volume_m3) {
+    return guarded([&] {
+        if (!state || !out_volume_m3) throw std::invalid_argument("state/out_volume_m3 is null");
+        *out_volume_m3 = state->impl.total_channel_storage_m3();
+    });
+}
+
 int ws_multiresolution_water_materialize(
     ws_world* world,
     const ws_continental_hydrology_result* continent,
