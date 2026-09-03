@@ -1,6 +1,7 @@
 #include "worldsim/multiresolution_water.hpp"
 
 #include "worldsim/world.hpp"
+#include "soil_hydrology_internal.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -173,6 +174,7 @@ double advance_coarse_bucket(ContinentalWaterCellState& s,
                              const ContinentalWaterForcing& f,
                              double area_m2,
                              const DynamicHydrologyParameters& parameters,
+                             const detail::SoilBucketParameters& soil,
                              ContinentalWaterStepReport& report) {
     s.last_evapotranspiration_mm = 0.0f;
     s.last_quick_runoff_mm = 0.0f;
@@ -193,13 +195,12 @@ double advance_coarse_bucket(ContinentalWaterCellState& s,
     s.snow_water_equivalent_mm -= static_cast<float>(melt);
     s.surface_water_mm += static_cast<float>(rainfall + melt);
 
-    const double saturation = parameters.soil_capacity_mm > 0.0f
-        ? std::clamp(static_cast<double>(s.soil_water_mm) / parameters.soil_capacity_mm, 0.0, 1.0)
+    const double saturation = soil.soil_capacity_mm > 0.0
+        ? std::clamp(static_cast<double>(s.soil_water_mm) / soil.soil_capacity_mm, 0.0, 1.0)
         : 1.0;
-    const double infiltration_capacity = parameters.infiltration_capacity_mm_per_day *
+    const double infiltration_capacity = soil.infiltration_capacity_mm_per_day *
                                          (0.25 + 0.75 * (1.0 - saturation));
-    const double soil_room = std::max(0.0,
-        static_cast<double>(parameters.soil_capacity_mm) - s.soil_water_mm);
+    const double soil_room = std::max(0.0, soil.soil_capacity_mm - s.soil_water_mm);
     const double infiltration = std::min({static_cast<double>(s.surface_water_mm),
                                           infiltration_capacity,
                                           soil_room});
@@ -209,10 +210,9 @@ double advance_coarse_bucket(ContinentalWaterCellState& s,
     const double surface_evap = std::min(static_cast<double>(s.surface_water_mm), pet * 0.35);
     s.surface_water_mm -= static_cast<float>(surface_evap);
     const double remaining_pet = pet - surface_evap;
-    const double moisture_span = std::max(1e-6,
-        static_cast<double>(parameters.field_capacity_mm - parameters.wilting_point_mm));
+    const double moisture_span = std::max(1e-6, soil.field_capacity_mm - soil.wilting_point_mm);
     const double stress = std::clamp(
-        (static_cast<double>(s.soil_water_mm) - parameters.wilting_point_mm) / moisture_span,
+        (static_cast<double>(s.soil_water_mm) - soil.wilting_point_mm) / moisture_span,
         0.0, 1.0);
     const double soil_et = std::min(static_cast<double>(s.soil_water_mm), remaining_pet * stress);
     s.soil_water_mm -= static_cast<float>(soil_et);
@@ -221,7 +221,7 @@ double advance_coarse_bucket(ContinentalWaterCellState& s,
     report.evapotranspiration_m3 += depth_to_volume(et, area_m2);
 
     const double excess_soil = std::max(0.0,
-        static_cast<double>(s.soil_water_mm) - parameters.field_capacity_mm);
+        static_cast<double>(s.soil_water_mm) - soil.field_capacity_mm);
     const double percolation_fraction = 1.0 - std::exp(-parameters.percolation_rate_per_day);
     const double percolation = excess_soil * percolation_fraction;
     s.soil_water_mm -= static_cast<float>(percolation);
@@ -286,6 +286,11 @@ ContinentalWaterCellState& MultiresolutionWaterState::coarse_cell_mutable(std::s
 
 double MultiresolutionWaterState::coarse_area_m2(std::size_t index) const noexcept {
     return coarse_.metadata_[index].area_m2;
+}
+
+SoilProperties MultiresolutionWaterState::coarse_soil_properties(std::size_t index) const noexcept {
+    return {coarse_.metadata_[index].soil_storage_capacity_scale,
+            coarse_.metadata_[index].soil_infiltration_capacity_scale};
 }
 
 std::uint32_t MultiresolutionWaterState::coarse_downstream_index(std::size_t index) const noexcept {
@@ -373,9 +378,14 @@ const RefinedWaterTileState& materialize_refined_water_tile(
 
     const auto& source = state.coarse_state().cells()[coarse_index];
     require_valid_storage(source);
-    if (source.soil_water_mm > state.parameters().soil_capacity_mm) {
-        throw std::logic_error("coarse soil water exceeds the shared L1 soil capacity");
+    const auto parent_soil = detail::scaled_soil_bucket_parameters(
+        state.parameters(), state.coarse_soil_properties(coarse_index));
+    if (!detail::soil_water_within_capacity(source.soil_water_mm, parent_soil.soil_capacity_mm)) {
+        throw std::logic_error("coarse soil water exceeds parent soil capacity");
     }
+    const double parent_saturation = parent_soil.soil_capacity_mm > 0.0
+        ? std::clamp(static_cast<double>(source.soil_water_mm) / parent_soil.soil_capacity_mm, 0.0, 1.0)
+        : 0.0;
 
     double child_area = 0.0;
     for (std::size_t i = 0; i < refined.state.cells.size(); ++i) {
@@ -389,10 +399,16 @@ const RefinedWaterTileState& materialize_refined_water_tile(
         if (!(area > 0.0)) throw std::logic_error("active refined cell has zero world overlap");
         child_area += area;
         if (topo_cell.ocean) continue;
+
+        const auto child_soil = detail::scaled_soil_bucket_parameters(
+            state.parameters(), world.sample_soil(topo_cell.coord));
         target.snow_water_equivalent_mm = source.snow_water_equivalent_mm;
         target.surface_water_mm = source.surface_water_mm;
-        target.soil_water_mm = source.soil_water_mm;
+        target.soil_water_mm = static_cast<float>(parent_saturation * child_soil.soil_capacity_mm);
         target.groundwater_mm = source.groundwater_mm;
+        if (!detail::soil_water_within_capacity(target.soil_water_mm, child_soil.soil_capacity_mm)) {
+            throw std::logic_error("refinement produced soil water above child capacity");
+        }
     }
 
     const double parent_area = state.coarse_area_m2(coarse_index);
@@ -438,6 +454,11 @@ void aggregate_refined_water_tile(
         const auto& cell = refined.state.cells[i];
         require_valid_storage(cell);
         if (!cell.active || refined.topology.hydrology.cells[i].ocean) continue;
+        const auto child_soil = detail::scaled_soil_bucket_parameters(
+            state.parameters(), world.sample_soil(cell.coord));
+        if (!detail::soil_water_within_capacity(cell.soil_water_mm, child_soil.soil_capacity_mm)) {
+            throw std::logic_error("refined soil water exceeds local child capacity");
+        }
         const double area = overlap_area_m2(
             cell.coord, world.config().regional_cell_m, world.config().bounds);
         snow_m3 += depth_to_volume(cell.snow_water_equivalent_mm, area);
@@ -453,8 +474,10 @@ void aggregate_refined_water_tile(
     aggregated.soil_water_mm = static_cast<float>(volume_to_depth(soil_m3, parent_area));
     aggregated.groundwater_mm = static_cast<float>(volume_to_depth(groundwater_m3, parent_area));
     require_valid_storage(aggregated);
-    if (aggregated.soil_water_mm > state.parameters().soil_capacity_mm) {
-        throw std::logic_error("aggregated soil water exceeds coarse soil capacity");
+    const auto parent_soil = detail::scaled_soil_bucket_parameters(
+        state.parameters(), state.coarse_soil_properties(coarse_index));
+    if (!detail::soil_water_within_capacity(aggregated.soil_water_mm, parent_soil.soil_capacity_mm)) {
+        throw std::logic_error("aggregated soil water exceeds coarse parent capacity");
     }
 
     state.coarse_cell_mutable(coarse_index) = aggregated;
@@ -481,6 +504,7 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
         throw std::invalid_argument("multiresolution storage total is not finite");
     }
 
+    std::vector<detail::SoilBucketParameters> coarse_soil_buckets(forcing.size());
     double precipitation_upper_m3 = 0.0;
     for (std::size_t i = 0; i < forcing.size(); ++i) {
         const auto& f = forcing[i];
@@ -489,6 +513,8 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
             throw std::invalid_argument("multiresolution water forcing contains invalid values");
         }
         if (state.coarse_is_ocean(i)) continue;
+        coarse_soil_buckets[i] = detail::scaled_soil_bucket_parameters(
+            state.parameters(), state.coarse_soil_properties(i));
         const auto coord = state.coarse_state().coord_of(i);
         if (state.is_refined(coord)) {
             const auto& tile = state.refined_.at(coord);
@@ -502,6 +528,11 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
                 const auto& child = tile.state.cells[j];
                 require_valid_storage(child);
                 if (!child.active || tile.topology.hydrology.cells[j].ocean) continue;
+                const auto child_soil = detail::scaled_soil_bucket_parameters(
+                    state.parameters(), world.sample_soil(child.coord));
+                if (!detail::soil_water_within_capacity(child.soil_water_mm, child_soil.soil_capacity_mm)) {
+                    throw std::invalid_argument("refined soil water exceeds local child capacity");
+                }
                 if (stored_depth_mm(child) + f.precipitation_mm > kMaxWaterDepthMm) {
                     throw std::invalid_argument("refined water depth exceeds numerical safety limit");
                 }
@@ -509,6 +540,10 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
         } else {
             const auto& coarse = state.coarse_state().cells()[i];
             require_valid_storage(coarse);
+            if (!detail::soil_water_within_capacity(coarse.soil_water_mm,
+                                                    coarse_soil_buckets[i].soil_capacity_mm)) {
+                throw std::invalid_argument("coarse soil water exceeds local parent capacity");
+            }
             if (stored_depth_mm(coarse) + f.precipitation_mm > kMaxWaterDepthMm) {
                 throw std::invalid_argument("coarse water depth exceeds numerical safety limit");
             }
@@ -543,7 +578,8 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
         c.last_baseflow_mm = 0.0f;
         c.last_routed_discharge_m3_s = 0.0f;
         if (state.coarse_is_ocean(i) || state.is_refined(coord)) continue;
-        routed[i] = advance_coarse_bucket(c, forcing[i], state.coarse_area_m2(i), state.parameters(), report);
+        routed[i] = advance_coarse_bucket(
+            c, forcing[i], state.coarse_area_m2(i), state.parameters(), coarse_soil_buckets[i], report);
     }
 
     for (const auto index32 : state.coarse_routing_order()) {
