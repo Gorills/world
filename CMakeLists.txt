@@ -12,10 +12,13 @@ add_library(worldsim
     src/continental_water.cpp
     src/multiresolution_water.cpp
     src/multiresolution_water_persistence.cpp
+    src/weather.cpp
+    src/weather_persistence.cpp
     src/persistence.cpp
     src/c_api.cpp
     src/soil_c_api.cpp
     src/multiresolution_water_c_api.cpp
+    src/weather_c_api.cpp
 )
 add_library(worldsim::worldsim ALIAS worldsim)
 
@@ -40,6 +43,9 @@ add_executable(worldsim_multiresolution_water_benchmark
     benchmarks/benchmark_multiresolution_water.cpp)
 target_link_libraries(worldsim_multiresolution_water_benchmark PRIVATE worldsim::worldsim)
 
+add_executable(worldsim_weather_benchmark benchmarks/benchmark_weather.cpp)
+target_link_libraries(worldsim_weather_benchmark PRIVATE worldsim::worldsim)
+
 if(WORLDSIM_BUILD_TESTS)
     enable_testing()
     add_executable(worldsim_tests tests/test_world.cpp)
@@ -53,6 +59,10 @@ if(WORLDSIM_BUILD_TESTS)
     add_executable(worldsim_soil_water_capacity_tests tests/test_soil_water_capacity.cpp)
     target_link_libraries(worldsim_soil_water_capacity_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_soil_water_capacity_tests COMMAND worldsim_soil_water_capacity_tests)
+
+    add_executable(worldsim_weather_tests tests/test_weather.cpp)
+    target_link_libraries(worldsim_weather_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_weather_tests COMMAND worldsim_weather_tests)
 
     add_executable(worldsim_continental_water_tests tests/test_continental_water.cpp)
     target_link_libraries(worldsim_continental_water_tests PRIVATE worldsim::worldsim)
@@ -96,4 +106,9 @@ if(WORLDSIM_BUILD_TESTS)
     set_target_properties(worldsim_multiresolution_water_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
     add_test(NAME worldsim_multiresolution_water_c_api_tests
         COMMAND worldsim_multiresolution_water_c_api_tests)
+
+    add_executable(worldsim_weather_c_api_tests tests/test_weather_c_api.c)
+    target_link_libraries(worldsim_weather_c_api_tests PRIVATE worldsim::worldsim)
+    set_target_properties(worldsim_weather_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
+    add_test(NAME worldsim_weather_c_api_tests COMMAND worldsim_weather_c_api_tests)
 endif()
