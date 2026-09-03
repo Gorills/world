@@ -150,4 +150,16 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_simulation_c_api_tests PRIVATE worldsim::worldsim)
     set_target_properties(worldsim_simulation_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
     add_test(NAME worldsim_simulation_c_api_tests COMMAND worldsim_simulation_c_api_tests)
+
+    add_test(NAME worldsim_cli_simulation_demo
+        COMMAND worldsim_cli demo worldsim_cli_simulation.ws)
+    add_test(NAME worldsim_cli_simulation_run
+        COMMAND worldsim_cli simulation-run worldsim_cli_simulation.ws worldsim_cli_simulation.wsc 2)
+    set_tests_properties(worldsim_cli_simulation_run PROPERTIES DEPENDS worldsim_cli_simulation_demo)
+    add_test(NAME worldsim_cli_simulation_resume
+        COMMAND worldsim_cli simulation-resume worldsim_cli_simulation.wsc 3)
+    set_tests_properties(worldsim_cli_simulation_resume PROPERTIES DEPENDS worldsim_cli_simulation_run)
+    add_test(NAME worldsim_cli_simulation_cleanup
+        COMMAND ${CMAKE_COMMAND} -E rm -f worldsim_cli_simulation.ws worldsim_cli_simulation.wsc)
+    set_tests_properties(worldsim_cli_simulation_cleanup PROPERTIES DEPENDS worldsim_cli_simulation_resume)
 endif()
