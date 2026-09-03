@@ -74,6 +74,12 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_weather_climatology_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_weather_climatology_tests COMMAND worldsim_weather_climatology_tests)
 
+    add_executable(worldsim_weather_climatology_matrix_tests
+        tests/test_weather_climatology_matrix.cpp)
+    target_link_libraries(worldsim_weather_climatology_matrix_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_weather_climatology_matrix_tests
+        COMMAND worldsim_weather_climatology_matrix_tests)
+
     add_executable(worldsim_weather_atomicity_tests tests/test_weather_atomicity.cpp)
     target_link_libraries(worldsim_weather_atomicity_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_weather_atomicity_tests COMMAND worldsim_weather_atomicity_tests)
