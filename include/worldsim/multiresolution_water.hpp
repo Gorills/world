@@ -30,6 +30,12 @@ public:
     [[nodiscard]] bool is_refined(CellCoord climate_coord) const noexcept;
     [[nodiscard]] const RefinedWaterTileState& refined_tile(CellCoord climate_coord) const;
 
+    // Conserved L0 channel water. It is connectivity state, not an independently refined
+    // bucket store: refinement changes terrestrial bucket ownership while channel storage
+    // remains attached to the L0 drainage parent.
+    [[nodiscard]] double channel_storage_m3(CellCoord climate_coord) const;
+    [[nodiscard]] double total_channel_storage_m3() const noexcept;
+
 private:
     struct RefinedTile {
         AuthoritativeHydrologyTile topology;
@@ -39,6 +45,7 @@ private:
     ContinentalWaterState coarse_;
     DynamicHydrologyParameters parameters_;
     std::unordered_map<CellCoord, RefinedTile, CellCoordHash> refined_;
+    std::vector<double> channel_storage_m3_;
 
     [[nodiscard]] ContinentalWaterCellState& coarse_cell_mutable(std::size_t index) noexcept;
     [[nodiscard]] double coarse_area_m2(std::size_t index) const noexcept;
@@ -84,7 +91,8 @@ void aggregate_refined_water_tile(
     const std::vector<ContinentalWaterForcing>& forcing);
 
 // Dynamic water remains an explicit simulation state rather than becoming implicit World state.
-// This versioned file persists its exact global day, coarse stores and sparse refined ownership.
+// This versioned file persists its exact global day, terrestrial stores, L0 channel storage and
+// sparse refined ownership.
 void save_multiresolution_water_state(
     const MultiresolutionWaterState& state,
     const std::filesystem::path& path);
