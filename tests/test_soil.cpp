@@ -157,7 +157,9 @@ int main() {
 
     bool outside_rejected = false;
     try {
-        (void)world.sample_soil({cfg.bounds.origin_x_m - 1.0, cfg.bounds.origin_y_m});
+        (void)world.sample_soil(WorldPosition{
+            cfg.bounds.origin_x_m - 1.0,
+            cfg.bounds.origin_y_m});
     } catch (const std::out_of_range&) {
         outside_rejected = true;
     }
