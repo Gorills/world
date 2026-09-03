@@ -15,6 +15,7 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kSecondsPerDay = 86'400.0;
+constexpr double kMaxWaterDepthMm = 1.0e30;
 constexpr std::uint32_t kNoDownstream = 0xFFFFFFFFu;
 constexpr std::uint32_t kOceanFlag = 1u;
 
@@ -45,6 +46,15 @@ double depth_to_volume(double depth_mm, double area_m2) {
 
 bool finite_non_negative(float value) {
     return std::isfinite(value) && value >= 0.0f;
+}
+
+void validate_continental_parameters(const DynamicHydrologyParameters& parameters) {
+    parameters.validate();
+    const double initial_storage = static_cast<double>(parameters.initial_soil_water_mm) +
+                                   static_cast<double>(parameters.initial_groundwater_mm);
+    if (!std::isfinite(initial_storage) || initial_storage > kMaxWaterDepthMm) {
+        throw std::invalid_argument("continental initial water storage exceeds numerical safety limit");
+    }
 }
 
 void validate_topology(const World& world, const ContinentalHydrologyResult& topology) {
@@ -144,7 +154,7 @@ ContinentalWaterState make_continental_water_state(
     const World& world,
     const ContinentalHydrologyResult& topology,
     const DynamicHydrologyParameters& parameters) {
-    parameters.validate();
+    validate_continental_parameters(parameters);
     validate_topology(world, topology);
 
     ContinentalWaterState state;
@@ -208,7 +218,7 @@ ContinentalWaterStepReport advance_continental_water_day(
     ContinentalWaterState& state,
     const std::vector<ContinentalWaterForcing>& forcing,
     const DynamicHydrologyParameters& parameters) {
-    parameters.validate();
+    validate_continental_parameters(parameters);
     if (state.simulated_day_ == std::numeric_limits<std::int64_t>::max()) {
         throw std::overflow_error("continental water simulation day overflow");
     }
@@ -216,8 +226,10 @@ ContinentalWaterStepReport advance_continental_water_day(
         throw std::invalid_argument("continental forcing must contain exactly one record per L0 cell");
     }
 
-    // Validate the complete forcing before any state mutation. This keeps a rejected step
-    // atomic from the caller's perspective instead of leaving a partially advanced continent.
+    // Validate the complete forcing and conservative numerical bounds before any mutation.
+    // kMaxWaterDepthMm is intentionally many orders above physical use; it only prevents
+    // formally finite float inputs from producing infinities in persistent state/diagnostics.
+    double maximum_routed_volume_m3 = 0.0;
     for (std::size_t i = 0; i < forcing.size(); ++i) {
         const auto& f = forcing[i];
         if (!finite_non_negative(f.precipitation_mm) ||
@@ -225,6 +237,30 @@ ContinentalWaterStepReport advance_continental_water_day(
             !finite_non_negative(f.potential_evapotranspiration_mm)) {
             throw std::invalid_argument("continental water forcing contains invalid values");
         }
+        if ((state.metadata_[i].flags & kOceanFlag) != 0) continue;
+
+        const auto& c = state.cells_[i];
+        if (!finite_non_negative(c.snow_water_equivalent_mm) ||
+            !finite_non_negative(c.surface_water_mm) ||
+            !finite_non_negative(c.soil_water_mm) ||
+            !finite_non_negative(c.groundwater_mm)) {
+            throw std::invalid_argument("continental water state contains invalid storage");
+        }
+        const double available_depth = static_cast<double>(c.snow_water_equivalent_mm) +
+            c.surface_water_mm + c.soil_water_mm + c.groundwater_mm + f.precipitation_mm;
+        if (!std::isfinite(available_depth) || available_depth > kMaxWaterDepthMm) {
+            throw std::invalid_argument("continental water depth exceeds numerical safety limit");
+        }
+        const double cell_volume = depth_to_volume(available_depth, state.metadata_[i].area_m2);
+        if (!std::isfinite(cell_volume) ||
+            maximum_routed_volume_m3 > std::numeric_limits<double>::max() - cell_volume) {
+            throw std::invalid_argument("continental routed water volume exceeds numerical safety limit");
+        }
+        maximum_routed_volume_m3 += cell_volume;
+    }
+    if (maximum_routed_volume_m3 / kSecondsPerDay >
+        static_cast<double>(std::numeric_limits<float>::max())) {
+        throw std::invalid_argument("continental routed discharge exceeds float diagnostic range");
     }
 
     ContinentalWaterStepReport report;
