@@ -16,6 +16,17 @@ SimulationState::SimulationState(
     validate_invariants();
 }
 
+SimulationState SimulationState::from_world(
+    World world,
+    const WeatherParameters& weather_parameters,
+    const DynamicHydrologyParameters& water_parameters) {
+    auto topology = world.analyze_continental_hydrology();
+    auto weather = make_weather_state(world, weather_parameters);
+    auto water = make_multiresolution_water_state(world, topology, water_parameters);
+    return SimulationState(
+        std::move(world), std::move(topology), std::move(weather), std::move(water));
+}
+
 SimulationState::SimulationState(
     World world,
     ContinentalHydrologyResult topology,
