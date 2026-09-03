@@ -1,21 +1,21 @@
-# Spatial soil properties (v0.7)
+# Spatial soil properties and water capacity (v0.8)
 
 ## Purpose
 
-v0.7 introduces the first spatial property field intended to influence future water-bucket behavior without creating another persistent world-state authority.
+v0.7 introduced deterministic spatial soil modifiers. v0.8 makes those modifiers part of the actual L0/L1 water-bucket model while retaining one conservative parent/child water truth.
 
-`SoilProperties` currently contains two dimensionless modifiers:
+`SoilProperties` contains two dimensionless modifiers:
 
-- `storage_capacity_scale` — future scale for soil storage/field/wilting capacities;
-- `infiltration_capacity_scale` — future scale for infiltration capacity.
+- `storage_capacity_scale` — scales soil capacity, field capacity and wilting point;
+- `infiltration_capacity_scale` — scales infiltration capacity per day.
 
-A value of `1` means the existing configurable hydrology reference parameter is unchanged.
+A value of `1` leaves the corresponding configurable hydrology reference parameter unchanged.
 
-These values are synthetic deterministic scaffolding. They are not measured soil classes, texture fractions, geological reconstruction or a claim of real European pedology.
+These values remain synthetic deterministic scaffolding. They are not measured soil classes, texture fractions, geological reconstruction or a claim of real European pedology.
 
 ## Derived world truth
 
-Soil properties are reproducible from world seed and coordinates. Sampling them does not materialize L1/L2 dynamic state and does not change `World::save()`.
+Soil properties remain reproducible from world seed and coordinates. Sampling them does not materialize L1/L2 dynamic state and does not change `World::save()`.
 
 The APIs are:
 
@@ -25,13 +25,27 @@ World::sample_soil(WorldPosition position)
 World::sample_climate_soil(CellCoord climate_coord)
 ```
 
-Regional sampling returns L1 heterogeneity. Climate sampling returns the parent-equivalent L0 property used as the coarse/fine conservation target.
+Regional sampling returns L1 heterogeneity. Climate sampling returns the parent-equivalent L0 property.
 
-## Parent/child contract
+## Effective bucket parameters
 
-For each L0 climate parent, the L1 raw values are normalized over the actual in-world area of its 8×8 regional children.
+For a cell with storage scale `s_storage` and infiltration scale `s_infiltration`:
 
-For a property scale `s`:
+```text
+soil_capacity        = reference_soil_capacity        × s_storage
+field_capacity       = reference_field_capacity       × s_storage
+wilting_point        = reference_wilting_point        × s_storage
+initial_soil_water   = reference_initial_soil_water   × s_storage
+infiltration_capacity= reference_infiltration_capacity× s_infiltration
+```
+
+Scaling field capacity and wilting point with storage capacity preserves their relative positions inside the bucket. Scaling initial soil water by the same factor preserves the configured reference saturation.
+
+Snow storage, surface storage, groundwater recession, percolation rate and snowmelt parameters are not soil-scaled in this milestone.
+
+## Parent/child capacity contract
+
+For each L0 climate parent, v0.7 guarantees the area-weighted L1 storage scale equals the parent storage scale over actual in-world child overlap areas:
 
 ```text
 parent_scale = Σ(child_scale × child_overlap_area)
@@ -39,40 +53,50 @@ parent_scale = Σ(child_scale × child_overlap_area)
                     Σ(child_overlap_area)
 ```
 
-This is true for full parents and partial parents cut by configured world bounds.
+Therefore the same relation holds for soil capacity.
 
-The implementation constructs it as:
+When an L0 parent is refined, v0.8 preserves parent soil saturation rather than copying parent soil depth uniformly:
 
 ```text
-child_scale = parent_scale × child_raw / weighted_mean(child_raw)
+parent_saturation = parent_soil_water / parent_soil_capacity
+child_soil_water  = parent_saturation × child_soil_capacity
 ```
 
-where the weighted mean uses each child's actual world-overlap area.
+Because parent capacity is the area-weighted equivalent of child capacities, this rule simultaneously:
 
-This contract matters more than any particular synthetic distribution. A future hydrology step can change how soil-water volume is distributed across children while preserving a well-defined parent-equivalent parameter.
+- conserves soil-water volume across the L0→L1 boundary;
+- keeps every child at the same saturation as the parent at the moment of refinement;
+- cannot overfill a child bucket when the parent itself is valid;
+- creates real heterogeneous L1 soil-water depths when child capacities differ.
 
-## Determinism and identity
+L1→L0 aggregation remains volume-based over actual child overlap areas and validates the resulting parent depth against the parent-equivalent capacity.
 
-For an identical `WorldConfig`, a coordinate returns the same soil properties without stored state. Changing the world seed changes the field.
+Snow, surface water and groundwater continue to transfer by uniform parent depth because this milestone introduces spatial heterogeneity only for soil bucket capacity.
 
-The parent field is sampled directly in O(1). Regional sampling currently reconstructs the 8×8 sibling normalization, which is bounded constant work. Future large-scale hydrology integration should cache tile properties where repeated daily access makes that worthwhile rather than changing the property contract.
+## Runtime validation
 
-## C ABI
+Before water mutation, L0 and L1 stepping reject soil-water states above the effective local capacity. Materialization, aggregation and multiresolution persistence apply the same local-capacity rule.
 
-`soil_c_api.h` is an additive extension rather than a change to the existing `ws_regional_sample` layout.
+The L0 solver caches its parent-equivalent soil scales in compact per-cell metadata so daily whole-world stepping does not reconstruct L1 sibling normalization. L1 tiles sample their bounded 8×8 derived soil field when needed.
 
-It exposes:
+## Persistence
 
-- `ws_world_sample_soil()` for a world position;
-- `ws_world_sample_climate_soil()` for the parent-equivalent L0 value;
-- `ws_soil_last_error()` as the extension's error channel.
+`World::save()` is unchanged because soil properties are derived world truth.
 
-This preserves the existing base C ABI layout while allowing engine adapters to query the new property field.
+Multiresolution dynamic-water persistence changes from format v1 to v2. The serialized state fields are otherwise unchanged, but the validity semantics are different: v1 represented uniform soil capacities, while v2 validates water against spatial local capacity.
 
-## Not yet implemented
+The v2 loader therefore rejects v1 files explicitly instead of silently reinterpreting old water depths under a different physical model. No automatic migration is provided in this bounded milestone.
 
-v0.7 does **not** yet apply these scales to dynamic water equations. The v0.6 bucket solvers and L0↔L1 materialization still use the existing global hydrology reference parameters.
+## Determinism and C ABI
 
-The next bounded task is capacity-aware hydrology integration: use these scales consistently in L0 and L1 bucket limits and define a conservative soil-water refinement rule when child capacities differ.
+Soil property identity remains determined by `WorldConfig`. Existing water C ABI structures are unchanged; capacity-aware behavior is applied behind the existing state/advance/materialize interfaces.
 
-Vegetation, erosion, sediment, real soil classes, lateral groundwater and hydraulic channel physics remain deferred.
+`soil_c_api.h` remains the additive query extension for direct soil-property sampling.
+
+## Current limitations
+
+- Soil modifiers are synthetic rather than measured pedology.
+- Soil storage is still a single vertically aggregated bucket; there are no soil horizons or texture-dependent retention curves.
+- Infiltration remains a bounded bucket flux rather than Richards-equation flow.
+- No lateral groundwater, wetlands, floodplains, erosion, sediment or vegetation feedback is modeled yet.
+- Multiresolution water persistence v1 is intentionally not migrated automatically to v2.

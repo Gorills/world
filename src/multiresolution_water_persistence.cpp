@@ -1,6 +1,7 @@
 #include "worldsim/multiresolution_water.hpp"
 
 #include "worldsim/world.hpp"
+#include "soil_hydrology_internal.hpp"
 
 #include <algorithm>
 #include <array>
@@ -17,7 +18,7 @@ namespace worldsim {
 namespace {
 
 constexpr std::array<char, 8> kMagic{'W','S','M','W','0','0','0','1'};
-constexpr std::uint32_t kFormatVersion = 1;
+constexpr std::uint32_t kFormatVersion = 2;
 constexpr double kMaxWaterDepthMm = 1.0e30;
 
 bool same_bounds(const WorldBounds& a, const WorldBounds& b) {
@@ -215,6 +216,7 @@ void save_multiresolution_water_state(
     const std::filesystem::path& path) {
     state.parameters_.validate();
     if (state.simulated_day() < 0) throw std::runtime_error("cannot save a negative multiresolution simulation day");
+    World soil_world(state.config());
 
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
     if (!out) throw std::runtime_error("cannot open multiresolution water file for writing: " + path.string());
@@ -230,8 +232,18 @@ void save_multiresolution_water_state(
     write_pod(out, state.coarse_.height_cells_);
     const auto coarse_count = static_cast<std::uint64_t>(state.coarse_.cells_.size());
     write_pod(out, coarse_count);
-    for (const auto& cell : state.coarse_.cells_) {
+    for (std::size_t i = 0; i < state.coarse_.cells_.size(); ++i) {
+        const auto& cell = state.coarse_.cells_[i];
         validate_cell(cell);
+        if ((state.coarse_.metadata_[i].flags & 1u) == 0u) {
+            const SoilProperties soil_properties{
+                state.coarse_.metadata_[i].soil_storage_capacity_scale,
+                state.coarse_.metadata_[i].soil_infiltration_capacity_scale};
+            const auto soil = detail::scaled_soil_bucket_parameters(state.parameters_, soil_properties);
+            if (!detail::soil_water_within_capacity(cell.soil_water_mm, soil.soil_capacity_mm)) {
+                throw std::runtime_error("coarse soil water exceeds saved local soil capacity");
+            }
+        }
         write_cell(out, cell);
     }
 
@@ -263,12 +275,16 @@ void save_multiresolution_water_state(
         for (std::size_t i = 0; i < refined->state.cells.size(); ++i) {
             const auto& cell = refined->state.cells[i];
             validate_cell(cell);
-            if (cell.coord != refined->topology.hydrology.cells[i].coord ||
-                cell.active != refined->topology.hydrology.cells[i].active) {
+            const auto& expected = refined->topology.hydrology.cells[i];
+            if (cell.coord != expected.coord || cell.active != expected.active) {
                 throw std::runtime_error("refined cell topology does not match its authoritative tile");
             }
-            if (cell.soil_water_mm > state.parameters_.soil_capacity_mm) {
-                throw std::runtime_error("refined soil water exceeds saved soil capacity");
+            if (cell.active && !expected.ocean) {
+                const auto soil = detail::scaled_soil_bucket_parameters(
+                    state.parameters_, soil_world.sample_soil(cell.coord));
+                if (!detail::soil_water_within_capacity(cell.soil_water_mm, soil.soil_capacity_mm)) {
+                    throw std::runtime_error("refined soil water exceeds saved local soil capacity");
+                }
             }
             write_cell(out, cell);
         }
@@ -287,6 +303,10 @@ MultiresolutionWaterState load_multiresolution_water_state(
     if (!in || magic != kMagic) throw std::runtime_error("invalid multiresolution water file magic");
     std::uint32_t version{};
     read_pod(in, version);
+    if (version == 1u) {
+        throw std::runtime_error(
+            "multiresolution water file v1 uses uniform soil-capacity semantics and is not compatible with v2");
+    }
     if (version != kFormatVersion) throw std::runtime_error("unsupported multiresolution water file version");
 
     const auto saved_config = read_config(in);
@@ -315,8 +335,14 @@ MultiresolutionWaterState load_multiresolution_water_state(
     state.set_simulated_day(day);
     for (std::size_t i = 0; i < state.coarse_.cells_.size(); ++i) {
         auto cell = read_coarse_cell(in);
-        if (cell.soil_water_mm > parameters.soil_capacity_mm) {
-            throw std::runtime_error("saved coarse soil water exceeds soil capacity");
+        if (!topology.cells[i].ocean) {
+            const SoilProperties soil_properties{
+                state.coarse_.metadata_[i].soil_storage_capacity_scale,
+                state.coarse_.metadata_[i].soil_infiltration_capacity_scale};
+            const auto soil = detail::scaled_soil_bucket_parameters(parameters, soil_properties);
+            if (!detail::soil_water_within_capacity(cell.soil_water_mm, soil.soil_capacity_mm)) {
+                throw std::runtime_error("saved coarse soil water exceeds local soil capacity");
+            }
         }
         if (topology.cells[i].ocean && !zero_stores(cell)) {
             throw std::runtime_error("saved ocean coarse cell contains terrestrial water");
@@ -358,8 +384,12 @@ MultiresolutionWaterState load_multiresolution_water_state(
             if (cell.coord != expected.coord || cell.active != expected.active) {
                 throw std::runtime_error("saved refined cell does not match authoritative topology");
             }
-            if (cell.soil_water_mm > parameters.soil_capacity_mm) {
-                throw std::runtime_error("saved refined soil water exceeds soil capacity");
+            if (cell.active && !expected.ocean) {
+                const auto soil = detail::scaled_soil_bucket_parameters(
+                    parameters, world.sample_soil(expected.coord));
+                if (!detail::soil_water_within_capacity(cell.soil_water_mm, soil.soil_capacity_mm)) {
+                    throw std::runtime_error("saved refined soil water exceeds local soil capacity");
+                }
             }
             if (expected.ocean && stored_depth_mm(cell) != 0.0) {
                 throw std::runtime_error("saved refined ocean cell contains terrestrial water");

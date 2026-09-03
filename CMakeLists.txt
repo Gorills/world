@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(worldsim VERSION 0.7.0 LANGUAGES C CXX)
+project(worldsim VERSION 0.8.0 LANGUAGES C CXX)
 
 option(WORLDSIM_BUILD_TESTS "Build WorldSim tests" ON)
 
@@ -49,6 +49,10 @@ if(WORLDSIM_BUILD_TESTS)
     add_executable(worldsim_soil_tests tests/test_soil.cpp)
     target_link_libraries(worldsim_soil_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_soil_tests COMMAND worldsim_soil_tests)
+
+    add_executable(worldsim_soil_water_capacity_tests tests/test_soil_water_capacity.cpp)
+    target_link_libraries(worldsim_soil_water_capacity_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_soil_water_capacity_tests COMMAND worldsim_soil_water_capacity_tests)
 
     add_executable(worldsim_continental_water_tests tests/test_continental_water.cpp)
     target_link_libraries(worldsim_continental_water_tests PRIVATE worldsim::worldsim)

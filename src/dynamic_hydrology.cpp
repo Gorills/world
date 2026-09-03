@@ -2,6 +2,7 @@
 
 #include "worldsim/coordinates.hpp"
 #include "worldsim/world.hpp"
+#include "soil_hydrology_internal.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -17,6 +18,7 @@ namespace {
 
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kSecondsPerDay = 86'400.0;
+constexpr double kMaxWaterDepthMm = 1.0e30;
 constexpr std::size_t kNoIndex = std::numeric_limits<std::size_t>::max();
 constexpr std::int64_t kTileRatio = 8;
 
@@ -118,7 +120,8 @@ std::vector<std::size_t> routing_order(const HydrologyResult& h) {
     return order;
 }
 
-void validate_state(const World& world, const AuthoritativeHydrologyTile& tile, const DynamicHydrologyTileState& state) {
+void validate_state(const World& world, const AuthoritativeHydrologyTile& tile,
+                    const DynamicHydrologyTileState& state) {
     validate_tile(world, tile);
     if (!same_config_identity(state.config, tile.config) || state.climate_coord != tile.climate_coord ||
         state.cells.size() != tile.hydrology.cells.size()) {
@@ -138,6 +141,23 @@ void validate_state(const World& world, const AuthoritativeHydrologyTile& tile, 
             throw std::invalid_argument("dynamic hydrology state contains invalid water storage");
         }
     }
+}
+
+std::vector<detail::SoilBucketParameters> make_soil_buckets(
+    const World& world,
+    const AuthoritativeHydrologyTile& tile,
+    const DynamicHydrologyTileState& state,
+    const DynamicHydrologyParameters& parameters) {
+    std::vector<detail::SoilBucketParameters> out(state.cells.size());
+    for (std::size_t i = 0; i < state.cells.size(); ++i) {
+        const auto& cell = state.cells[i];
+        if (!cell.active || tile.hydrology.cells[i].ocean) continue;
+        out[i] = detail::scaled_soil_bucket_parameters(parameters, world.sample_soil(cell.coord));
+        if (!detail::soil_water_within_capacity(cell.soil_water_mm, out[i].soil_capacity_mm)) {
+            throw std::invalid_argument("dynamic hydrology soil water exceeds local soil capacity");
+        }
+    }
+    return out;
 }
 
 double total_storage_m3(const World& world, const DynamicHydrologyTileState& state) {
@@ -204,8 +224,20 @@ DynamicHydrologyTileState make_dynamic_hydrology_tile_state(
         target.coord = source.coord;
         target.active = source.active;
         if (!source.active || source.ocean) continue;
-        // Initial conditions are explicit model parameters; they are not generated water fluxes.
-        target.soil_water_mm = parameters.initial_soil_water_mm;
+
+        const auto soil_properties = world.sample_soil(target.coord);
+        const auto soil = detail::scaled_soil_bucket_parameters(parameters, soil_properties);
+        const double initial_soil = detail::scaled_initial_soil_water_mm(parameters, soil_properties);
+        if (initial_soil > soil.soil_capacity_mm + detail::soil_capacity_tolerance_mm(soil.soil_capacity_mm)) {
+            throw std::logic_error("scaled initial soil water exceeds local soil capacity");
+        }
+        const double initial_storage = initial_soil + static_cast<double>(parameters.initial_groundwater_mm);
+        if (!std::isfinite(initial_storage) || initial_storage > kMaxWaterDepthMm) {
+            throw std::invalid_argument("dynamic hydrology initial water storage exceeds numerical safety limit");
+        }
+
+        // Initial soil depth scales with storage capacity, preserving reference saturation.
+        target.soil_water_mm = static_cast<float>(initial_soil);
         target.groundwater_mm = parameters.initial_groundwater_mm;
         const double area = overlap_area_m2(target.coord, world.config().regional_cell_m, world.config().bounds);
         if (!(area > 0.0)) throw std::logic_error("active hydrology cell does not overlap world");
@@ -285,6 +317,7 @@ HydrologyStepReport advance_dynamic_hydrology_tile(
         inflow_by_cell[i] += in.volume_m3;
     }
 
+    const auto soil_buckets = make_soil_buckets(world, tile, state, parameters);
     const auto order = routing_order(tile.hydrology);
     const int steps = static_cast<int>(std::ceil(duration_days));
     const double sub_days = duration_days / static_cast<double>(steps);
@@ -310,6 +343,7 @@ HydrologyStepReport advance_dynamic_hydrology_tile(
             const auto& topo = tile.hydrology.cells[i];
             if (!s.active || topo.ocean) continue;
             const auto& f = forcing[i];
+            const auto& soil = soil_buckets[i];
             const double area = overlap_area_m2(s.coord, world.config().regional_cell_m, world.config().bounds);
             const double precipitation = static_cast<double>(f.precipitation_mm) / steps;
             const double pet = static_cast<double>(f.potential_evapotranspiration_mm) / steps;
@@ -326,13 +360,15 @@ HydrologyStepReport advance_dynamic_hydrology_tile(
             s.snow_water_equivalent_mm -= static_cast<float>(melt);
             s.surface_water_mm += static_cast<float>(rainfall + melt);
 
-            const double saturation = parameters.soil_capacity_mm > 0.0f
-                ? std::clamp(static_cast<double>(s.soil_water_mm) / parameters.soil_capacity_mm, 0.0, 1.0)
+            const double saturation = soil.soil_capacity_mm > 0.0
+                ? std::clamp(static_cast<double>(s.soil_water_mm) / soil.soil_capacity_mm, 0.0, 1.0)
                 : 1.0;
-            const double infiltration_capacity = static_cast<double>(parameters.infiltration_capacity_mm_per_day) *
+            const double infiltration_capacity = soil.infiltration_capacity_mm_per_day *
                                                  (0.25 + 0.75 * (1.0 - saturation)) * sub_days;
-            const double soil_room = std::max(0.0, static_cast<double>(parameters.soil_capacity_mm) - s.soil_water_mm);
-            const double infiltration = std::min({static_cast<double>(s.surface_water_mm), infiltration_capacity, soil_room});
+            const double soil_room = std::max(0.0, soil.soil_capacity_mm - s.soil_water_mm);
+            const double infiltration = std::min({static_cast<double>(s.surface_water_mm),
+                                                  infiltration_capacity,
+                                                  soil_room});
             s.surface_water_mm -= static_cast<float>(infiltration);
             s.soil_water_mm += static_cast<float>(infiltration);
 
@@ -340,21 +376,26 @@ HydrologyStepReport advance_dynamic_hydrology_tile(
             const double surface_evap = std::min(static_cast<double>(s.surface_water_mm), pet * 0.35);
             s.surface_water_mm -= static_cast<float>(surface_evap);
             const double remaining_pet = pet - surface_evap;
-            const double denom = std::max(1e-6, static_cast<double>(parameters.field_capacity_mm - parameters.wilting_point_mm));
-            const double stress = std::clamp((static_cast<double>(s.soil_water_mm) - parameters.wilting_point_mm) / denom, 0.0, 1.0);
+            const double denom = std::max(1e-6, soil.field_capacity_mm - soil.wilting_point_mm);
+            const double stress = std::clamp(
+                (static_cast<double>(s.soil_water_mm) - soil.wilting_point_mm) / denom,
+                0.0, 1.0);
             const double soil_et = std::min(static_cast<double>(s.soil_water_mm), remaining_pet * stress);
             s.soil_water_mm -= static_cast<float>(soil_et);
             const double et = surface_evap + soil_et;
             s.last_evapotranspiration_mm += static_cast<float>(et);
             report.evapotranspiration_m3 += depth_to_volume(et, area);
 
-            const double excess_soil = std::max(0.0, static_cast<double>(s.soil_water_mm) - parameters.field_capacity_mm);
-            const double percolation_fraction = 1.0 - std::exp(-static_cast<double>(parameters.percolation_rate_per_day) * sub_days);
+            const double excess_soil = std::max(0.0,
+                static_cast<double>(s.soil_water_mm) - soil.field_capacity_mm);
+            const double percolation_fraction = 1.0 - std::exp(
+                -static_cast<double>(parameters.percolation_rate_per_day) * sub_days);
             const double percolation = excess_soil * percolation_fraction;
             s.soil_water_mm -= static_cast<float>(percolation);
             s.groundwater_mm += static_cast<float>(percolation);
 
-            const double baseflow_fraction = 1.0 - std::exp(-static_cast<double>(parameters.groundwater_recession_per_day) * sub_days);
+            const double baseflow_fraction = 1.0 - std::exp(
+                -static_cast<double>(parameters.groundwater_recession_per_day) * sub_days);
             const double baseflow = static_cast<double>(s.groundwater_mm) * baseflow_fraction;
             s.groundwater_mm -= static_cast<float>(baseflow);
             s.last_baseflow_mm += static_cast<float>(baseflow);
@@ -392,7 +433,8 @@ HydrologyStepReport advance_dynamic_hydrology_tile(
     const double total_seconds = duration_days * kSecondsPerDay;
     for (std::size_t i = 0; i < state.cells.size(); ++i) {
         if (state.cells[i].active) {
-            state.cells[i].last_routed_discharge_m3_s = static_cast<float>(routed_volume_total[i] / total_seconds);
+            state.cells[i].last_routed_discharge_m3_s = static_cast<float>(
+                routed_volume_total[i] / total_seconds);
         }
     }
 
