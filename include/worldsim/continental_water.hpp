@@ -68,6 +68,8 @@ private:
         float mean_temperature_at_elevation_c{};
         float annual_precipitation_mm{};
         float continentality{};
+        float soil_storage_capacity_scale{1.0f};
+        float soil_infiltration_capacity_scale{1.0f};
         std::uint32_t downstream_index{0xFFFFFFFFu};
         std::uint32_t flags{}; // bit 0 = ocean
     };
