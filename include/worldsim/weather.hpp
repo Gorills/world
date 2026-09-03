@@ -115,10 +115,14 @@ struct WeatherWaterStepReport {
 // Coupled helpers keep atmospheric and hydrologic clocks exact. Weather's next state is prepared
 // before the water step and committed only after water succeeds, so rejected hydrology input does
 // not leave the two systems on different days.
+//
+// ContinentalWaterState predates parameter ownership in the C++ state object. Its coupled helper
+// therefore requires the caller to pass explicitly the same hydrology parameters used at state
+// construction. MultiresolutionWaterState owns its parameter set and has no such external argument.
 [[nodiscard]] WeatherWaterStepReport advance_weather_continental_water_day(
     WeatherState& weather,
     ContinentalWaterState& water,
-    const DynamicHydrologyParameters& water_parameters = {});
+    const DynamicHydrologyParameters& water_parameters);
 
 [[nodiscard]] WeatherWaterStepReport advance_weather_multiresolution_water_day(
     const World& world,
