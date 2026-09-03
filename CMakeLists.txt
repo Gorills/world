@@ -37,7 +37,7 @@ if(BUILD_SHARED_LIBS)
 endif()
 
 if(MSVC)
-    target_compile_options(worldsim PRIVATE /W4 /permissive-)
+    target_compile_options(worldsim PRIVATE /W4 /permissive- /EHsc)
 else()
     target_compile_options(worldsim PRIVATE -Wall -Wextra -Wpedantic -Wconversion -Wshadow)
 endif()
