@@ -47,6 +47,12 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_multiresolution_water_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_multiresolution_water_tests COMMAND worldsim_multiresolution_water_tests)
 
+    add_executable(worldsim_multiresolution_water_persistence_tests
+        tests/test_multiresolution_water_persistence.cpp)
+    target_link_libraries(worldsim_multiresolution_water_persistence_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_multiresolution_water_persistence_tests
+        COMMAND worldsim_multiresolution_water_persistence_tests)
+
     add_executable(worldsim_c_api_tests tests/test_c_api.c)
     target_link_libraries(worldsim_c_api_tests PRIVATE worldsim::worldsim)
     set_target_properties(worldsim_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
