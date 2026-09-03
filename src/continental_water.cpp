@@ -1,6 +1,7 @@
 #include "worldsim/continental_water.hpp"
 
 #include "worldsim/world.hpp"
+#include "soil_hydrology_internal.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -185,7 +186,20 @@ ContinentalWaterState make_continental_water_state(
             0.0065 * std::max(0.0f, topo.terrain_elevation_m));
         meta.annual_precipitation_mm = climate.annual_precipitation_mm;
         meta.continentality = climate.continentality;
-        state.cells_[i].soil_water_mm = parameters.initial_soil_water_mm;
+
+        const auto soil_properties = world.sample_climate_soil(topo.coord);
+        meta.soil_storage_capacity_scale = soil_properties.storage_capacity_scale;
+        meta.soil_infiltration_capacity_scale = soil_properties.infiltration_capacity_scale;
+        const auto soil = detail::scaled_soil_bucket_parameters(parameters, soil_properties);
+        const double initial_soil = detail::scaled_initial_soil_water_mm(parameters, soil_properties);
+        if (initial_soil > soil.soil_capacity_mm + detail::soil_capacity_tolerance_mm(soil.soil_capacity_mm)) {
+            throw std::logic_error("scaled L0 initial soil water exceeds local soil capacity");
+        }
+        const double initial_storage = initial_soil + static_cast<double>(parameters.initial_groundwater_mm);
+        if (!std::isfinite(initial_storage) || initial_storage > kMaxWaterDepthMm) {
+            throw std::invalid_argument("scaled continental initial water storage exceeds numerical safety limit");
+        }
+        state.cells_[i].soil_water_mm = static_cast<float>(initial_soil);
         state.cells_[i].groundwater_mm = parameters.initial_groundwater_mm;
     }
     return state;
@@ -229,6 +243,7 @@ ContinentalWaterStepReport advance_continental_water_day(
     // Validate the complete forcing and conservative numerical bounds before any mutation.
     // kMaxWaterDepthMm is intentionally many orders above physical use; it only prevents
     // formally finite float inputs from producing infinities in persistent state/diagnostics.
+    std::vector<detail::SoilBucketParameters> soil_buckets(state.cells_.size());
     double maximum_routed_volume_m3 = 0.0;
     for (std::size_t i = 0; i < forcing.size(); ++i) {
         const auto& f = forcing[i];
@@ -246,6 +261,14 @@ ContinentalWaterStepReport advance_continental_water_day(
             !finite_non_negative(c.groundwater_mm)) {
             throw std::invalid_argument("continental water state contains invalid storage");
         }
+        const SoilProperties soil_properties{
+            state.metadata_[i].soil_storage_capacity_scale,
+            state.metadata_[i].soil_infiltration_capacity_scale};
+        soil_buckets[i] = detail::scaled_soil_bucket_parameters(parameters, soil_properties);
+        if (!detail::soil_water_within_capacity(c.soil_water_mm, soil_buckets[i].soil_capacity_mm)) {
+            throw std::invalid_argument("continental soil water exceeds local soil capacity");
+        }
+
         const double available_depth = static_cast<double>(c.snow_water_equivalent_mm) +
             c.surface_water_mm + c.soil_water_mm + c.groundwater_mm + f.precipitation_mm;
         if (!std::isfinite(available_depth) || available_depth > kMaxWaterDepthMm) {
@@ -279,6 +302,7 @@ ContinentalWaterStepReport advance_continental_water_day(
         s.last_baseflow_mm = 0.0f;
         s.last_routed_discharge_m3_s = 0.0f;
         if ((meta.flags & kOceanFlag) != 0) continue;
+        const auto& soil = soil_buckets[i];
 
         const double precipitation = f.precipitation_mm;
         const double temperature = f.mean_air_temperature_c;
@@ -294,13 +318,12 @@ ContinentalWaterStepReport advance_continental_water_day(
         s.snow_water_equivalent_mm -= static_cast<float>(melt);
         s.surface_water_mm += static_cast<float>(rainfall + melt);
 
-        const double saturation = parameters.soil_capacity_mm > 0.0f
-            ? std::clamp(static_cast<double>(s.soil_water_mm) / parameters.soil_capacity_mm, 0.0, 1.0)
+        const double saturation = soil.soil_capacity_mm > 0.0
+            ? std::clamp(static_cast<double>(s.soil_water_mm) / soil.soil_capacity_mm, 0.0, 1.0)
             : 1.0;
-        const double infiltration_capacity = parameters.infiltration_capacity_mm_per_day *
+        const double infiltration_capacity = soil.infiltration_capacity_mm_per_day *
                                              (0.25 + 0.75 * (1.0 - saturation));
-        const double soil_room = std::max(0.0,
-            static_cast<double>(parameters.soil_capacity_mm) - s.soil_water_mm);
+        const double soil_room = std::max(0.0, soil.soil_capacity_mm - s.soil_water_mm);
         const double infiltration = std::min({static_cast<double>(s.surface_water_mm),
                                               infiltration_capacity,
                                               soil_room});
@@ -310,10 +333,9 @@ ContinentalWaterStepReport advance_continental_water_day(
         const double surface_evap = std::min(static_cast<double>(s.surface_water_mm), pet * 0.35);
         s.surface_water_mm -= static_cast<float>(surface_evap);
         const double remaining_pet = pet - surface_evap;
-        const double moisture_span = std::max(1e-6,
-            static_cast<double>(parameters.field_capacity_mm - parameters.wilting_point_mm));
+        const double moisture_span = std::max(1e-6, soil.field_capacity_mm - soil.wilting_point_mm);
         const double stress = std::clamp(
-            (static_cast<double>(s.soil_water_mm) - parameters.wilting_point_mm) / moisture_span,
+            (static_cast<double>(s.soil_water_mm) - soil.wilting_point_mm) / moisture_span,
             0.0, 1.0);
         const double soil_et = std::min(static_cast<double>(s.soil_water_mm), remaining_pet * stress);
         s.soil_water_mm -= static_cast<float>(soil_et);
@@ -322,7 +344,7 @@ ContinentalWaterStepReport advance_continental_water_day(
         report.evapotranspiration_m3 += depth_to_volume(et, meta.area_m2);
 
         const double excess_soil = std::max(0.0,
-            static_cast<double>(s.soil_water_mm) - parameters.field_capacity_mm);
+            static_cast<double>(s.soil_water_mm) - soil.field_capacity_mm);
         const double percolation_fraction = 1.0 - std::exp(-parameters.percolation_rate_per_day);
         const double percolation = excess_soil * percolation_fraction;
         s.soil_water_mm -= static_cast<float>(percolation);
