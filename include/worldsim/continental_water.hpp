@@ -39,10 +39,8 @@ struct ContinentalWaterStepReport {
 };
 
 class World;
+class MultiresolutionWaterState;
 
-// Authoritative coarse dynamic water state for the complete L0 world.
-// Mutable internals are intentionally encapsulated: a caller can observe state but cannot
-// alter the global clock, routing DAG or stores without going through a simulation command.
 class ContinentalWaterState {
 public:
     [[nodiscard]] const WorldConfig& config() const noexcept { return config_; }
@@ -62,7 +60,7 @@ private:
         float annual_precipitation_mm{};
         float continentality{};
         std::uint32_t downstream_index{0xFFFFFFFFu};
-        std::uint32_t flags{}; // bit 0 = ocean
+        std::uint32_t flags{};
     };
 
     WorldConfig config_{};
@@ -76,6 +74,7 @@ private:
 
     [[nodiscard]] double total_storage_m3() const;
 
+    friend class MultiresolutionWaterState;
     friend ContinentalWaterState make_continental_water_state(
         const World&, const ContinentalHydrologyResult&, const DynamicHydrologyParameters&);
     friend std::vector<ContinentalWaterForcing> make_smooth_continental_daily_forcing(
@@ -90,14 +89,9 @@ private:
     const ContinentalHydrologyResult& topology,
     const DynamicHydrologyParameters& parameters = {});
 
-// Temporary deterministic forcing provider until a real weather layer owns atmospheric forcing.
-// It uses climate values cached when the state is created, so advancing Europe does not re-run
-// procedural climate noise for every cell on every day.
 [[nodiscard]] std::vector<ContinentalWaterForcing> make_smooth_continental_daily_forcing(
     const ContinentalWaterState& state);
 
-// Advances exactly one global day along the immutable L0 drainage snapshot captured at state
-// creation. Every L0 cell shares this clock; there are no independently drifting tile clocks.
 [[nodiscard]] ContinentalWaterStepReport advance_continental_water_day(
     ContinentalWaterState& state,
     const std::vector<ContinentalWaterForcing>& forcing,
