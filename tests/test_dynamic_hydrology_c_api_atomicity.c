@@ -1,11 +1,12 @@
 #include "worldsim/c_api.h"
 
 #include <float.h>
-#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+enum { kTileCellCount = 64 };
 
 static int fail(const char* message) {
     fprintf(stderr, "FAIL: %s; api_error=%s\n", message, ws_last_error());
@@ -64,32 +65,32 @@ int main(void) {
         return fail("create dynamic hydrology state");
     }
 
-    ws_hydrometeorological_forcing forcing[WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT];
+    ws_hydrometeorological_forcing forcing[kTileCellCount];
     if (ws_dynamic_hydrology_make_smooth_climatological_forcing(
-            world, state, 120.0, 1.0, forcing, WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT) != 0) {
+            world, state, 120.0, 1.0, forcing, kTileCellCount) != 0) {
         ws_dynamic_hydrology_state_destroy(state);
         ws_continental_hydrology_result_destroy(continent);
         ws_world_destroy(world);
         return fail("make forcing");
     }
 
-    ws_dynamic_hydrology_cell_state before[WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT];
-    ws_dynamic_hydrology_cell_state after[WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT];
-    if (ws_dynamic_hydrology_copy_cells(state, before, WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT) != 0) {
+    ws_dynamic_hydrology_cell_state before[kTileCellCount];
+    ws_dynamic_hydrology_cell_state after[kTileCellCount];
+    if (ws_dynamic_hydrology_copy_cells(state, before, kTileCellCount) != 0) {
         ws_dynamic_hydrology_state_destroy(state);
         ws_continental_hydrology_result_destroy(continent);
         ws_world_destroy(world);
         return fail("copy initial state");
     }
 
-    uint64_t active = WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT;
-    for (uint64_t i = 0; i < WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT; ++i) {
+    uint64_t active = kTileCellCount;
+    for (uint64_t i = 0; i < kTileCellCount; ++i) {
         if (before[i].active) {
             active = i;
             break;
         }
     }
-    if (active == WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT) {
+    if (active == kTileCellCount) {
         ws_dynamic_hydrology_state_destroy(state);
         ws_continental_hydrology_result_destroy(continent);
         ws_world_destroy(world);
@@ -100,15 +101,14 @@ int main(void) {
     forcing[active].precipitation_mm = FLT_MAX;
     ws_hydrology_step_report report = {0};
     if (ws_dynamic_hydrology_advance(
-            world, state, forcing, WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT,
-            NULL, 0, 1.0, &report) == 0) {
+            world, state, forcing, kTileCellCount, NULL, 0, 1.0, &report) == 0) {
         ws_dynamic_hydrology_state_destroy(state);
         ws_continental_hydrology_result_destroy(continent);
         ws_world_destroy(world);
         return fail("unsafe finite forcing was accepted");
     }
     if (ws_dynamic_hydrology_simulated_days(state) != day_before ||
-        ws_dynamic_hydrology_copy_cells(state, after, WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT) != 0 ||
+        ws_dynamic_hydrology_copy_cells(state, after, kTileCellCount) != 0 ||
         memcmp(before, after, sizeof(before)) != 0) {
         ws_dynamic_hydrology_state_destroy(state);
         ws_continental_hydrology_result_destroy(continent);
@@ -117,7 +117,7 @@ int main(void) {
     }
 
     if (ws_dynamic_hydrology_make_smooth_climatological_forcing(
-            world, state, 120.0, 1.0, forcing, WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT) != 0) {
+            world, state, 120.0, 1.0, forcing, kTileCellCount) != 0) {
         ws_dynamic_hydrology_state_destroy(state);
         ws_continental_hydrology_result_destroy(continent);
         ws_world_destroy(world);
@@ -131,15 +131,14 @@ int main(void) {
     inflows[1] = inflows[0];
     memset(&report, 0, sizeof(report));
     if (ws_dynamic_hydrology_advance(
-            world, state, forcing, WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT,
-            inflows, 2, 1.0, &report) == 0) {
+            world, state, forcing, kTileCellCount, inflows, 2, 1.0, &report) == 0) {
         ws_dynamic_hydrology_state_destroy(state);
         ws_continental_hydrology_result_destroy(continent);
         ws_world_destroy(world);
         return fail("overflowing external inflow was accepted");
     }
     if (ws_dynamic_hydrology_simulated_days(state) != day_before ||
-        ws_dynamic_hydrology_copy_cells(state, after, WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT) != 0 ||
+        ws_dynamic_hydrology_copy_cells(state, after, kTileCellCount) != 0 ||
         memcmp(before, after, sizeof(before)) != 0) {
         ws_dynamic_hydrology_state_destroy(state);
         ws_continental_hydrology_result_destroy(continent);
