@@ -18,7 +18,7 @@ namespace worldsim {
 namespace {
 
 constexpr std::array<char, 8> kMagic{'W','S','M','W','0','0','0','1'};
-constexpr std::uint32_t kFormatVersion = 2;
+constexpr std::uint32_t kFormatVersion = 3;
 constexpr double kMaxWaterDepthMm = 1.0e30;
 
 bool same_bounds(const WorldBounds& a, const WorldBounds& b) {
@@ -34,6 +34,10 @@ bool same_config_identity(const WorldConfig& a, const WorldConfig& b) {
 
 bool finite_non_negative(float value) {
     return std::isfinite(value) && value >= 0.0f;
+}
+
+bool finite_non_negative(double value) {
+    return std::isfinite(value) && value >= 0.0;
 }
 
 double stored_depth_mm(const ContinentalWaterCellState& c) {
@@ -216,6 +220,9 @@ void save_multiresolution_water_state(
     const std::filesystem::path& path) {
     state.parameters_.validate();
     if (state.simulated_day() < 0) throw std::runtime_error("cannot save a negative multiresolution simulation day");
+    if (state.channel_storage_m3_.size() != state.coarse_.cells_.size()) {
+        throw std::runtime_error("cannot save inconsistent channel storage shape");
+    }
     World soil_world(state.config());
 
     std::ofstream out(path, std::ios::binary | std::ios::trunc);
@@ -245,6 +252,16 @@ void save_multiresolution_water_state(
             }
         }
         write_cell(out, cell);
+    }
+
+    write_pod(out, coarse_count);
+    for (std::size_t i = 0; i < state.channel_storage_m3_.size(); ++i) {
+        const double volume = state.channel_storage_m3_[i];
+        if (!finite_non_negative(volume) ||
+            ((state.coarse_.metadata_[i].flags & 1u) != 0u && volume != 0.0)) {
+            throw std::runtime_error("multiresolution channel storage is invalid for persistence");
+        }
+        write_pod(out, volume);
     }
 
     std::vector<const MultiresolutionWaterState::RefinedTile*> ordered;
@@ -305,9 +322,11 @@ MultiresolutionWaterState load_multiresolution_water_state(
     read_pod(in, version);
     if (version == 1u) {
         throw std::runtime_error(
-            "multiresolution water file v1 uses uniform soil-capacity semantics and is not compatible with v2");
+            "multiresolution water file v1 uses uniform soil-capacity semantics and is not compatible with v2+");
     }
-    if (version != kFormatVersion) throw std::runtime_error("unsupported multiresolution water file version");
+    if (version != 2u && version != kFormatVersion) {
+        throw std::runtime_error("unsupported multiresolution water file version");
+    }
 
     const auto saved_config = read_config(in);
     if (!same_config_identity(saved_config, world.config()) ||
@@ -348,6 +367,25 @@ MultiresolutionWaterState load_multiresolution_water_state(
             throw std::runtime_error("saved ocean coarse cell contains terrestrial water");
         }
         state.coarse_cell_mutable(i) = cell;
+    }
+
+    // v2 had no retained channel state: all routed volume had either reached a bucket/refined
+    // tile or terminal outflow at the checkpoint boundary. Migrating it to zero channel storage
+    // is therefore the only non-invented initial channel state.
+    if (version >= 3u) {
+        std::uint64_t channel_count{};
+        read_pod(in, channel_count);
+        if (channel_count != coarse_count) {
+            throw std::runtime_error("multiresolution water file channel count does not match L0 cells");
+        }
+        for (std::size_t i = 0; i < state.channel_storage_m3_.size(); ++i) {
+            double volume{};
+            read_pod(in, volume);
+            if (!finite_non_negative(volume) || (topology.cells[i].ocean && volume != 0.0)) {
+                throw std::runtime_error("multiresolution water file contains invalid channel storage");
+            }
+            state.channel_storage_m3_[i] = volume;
+        }
     }
 
     std::uint64_t refined_count{};
