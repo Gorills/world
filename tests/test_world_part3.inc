@@ -168,8 +168,11 @@
     World duplicate_world(cfg(901));
     (void)duplicate_world.materialize_local_patch({0, 0});
     duplicate_world.save(duplicate_save);
-    std::ifstream duplicate_in(duplicate_save, std::ios::binary);
-    std::vector<char> duplicate_bytes((std::istreambuf_iterator<char>(duplicate_in)), {});
+    std::vector<char> duplicate_bytes;
+    {
+        std::ifstream duplicate_in(duplicate_save, std::ios::binary);
+        duplicate_bytes.assign(std::istreambuf_iterator<char>(duplicate_in), {});
+    }
     constexpr std::size_t count_offset = 8 + sizeof(std::uint32_t) + sizeof(Seed) +
         sizeof(double) * 4 + sizeof(std::int32_t) * 3 + sizeof(float);
     constexpr std::size_t records_offset = count_offset + sizeof(std::uint64_t);
