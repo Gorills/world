@@ -1,6 +1,7 @@
 #include "worldsim/multiresolution_water.hpp"
 #include "worldsim/world.hpp"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstddef>
@@ -76,6 +77,15 @@ int main() {
     if (report.day_after != 1 || !std::isfinite(report.water_balance_error_m3)) {
         throw std::runtime_error("benchmark multiresolution day did not complete correctly");
     }
+    const double balance_scale_m3 = std::max(
+        1.0,
+        std::abs(report.storage_before_m3) + std::abs(report.precipitation_m3) +
+            std::abs(report.evapotranspiration_m3) + std::abs(report.terminal_outflow_m3) +
+            std::abs(report.storage_after_m3));
+    const double relative_balance_error = std::abs(report.water_balance_error_m3) / balance_scale_m3;
+    if (!std::isfinite(relative_balance_error) || relative_balance_error > 1.0e-6) {
+        throw std::runtime_error("Europe-scale mixed-resolution water balance exceeds tolerance");
+    }
 
     const auto aggregate_begin = Clock::now();
     for (const auto coord : refined_parents) {
@@ -95,6 +105,12 @@ int main() {
               << "mixed_day_ms=" << elapsed_ms(step_begin, step_end) << '\n'
               << "aggregate_64_ms=" << elapsed_ms(aggregate_begin, aggregate_end) << '\n'
               << "peak_rss_kib=" << peak_rss_kib() << '\n'
-              << "water_balance_error_m3=" << report.water_balance_error_m3 << '\n';
+              << "storage_before_m3=" << report.storage_before_m3 << '\n'
+              << "precipitation_m3=" << report.precipitation_m3 << '\n'
+              << "evapotranspiration_m3=" << report.evapotranspiration_m3 << '\n'
+              << "terminal_outflow_m3=" << report.terminal_outflow_m3 << '\n'
+              << "storage_after_m3=" << report.storage_after_m3 << '\n'
+              << "water_balance_error_m3=" << report.water_balance_error_m3 << '\n'
+              << std::scientific << "relative_water_balance_error=" << relative_balance_error << '\n';
     return 0;
 }
