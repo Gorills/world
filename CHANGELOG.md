@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.8.0
+
+### Added
+
+- Spatial soil modifiers now drive actual L0 and L1 water-bucket behavior.
+- Storage-capacity scale consistently modifies soil capacity, field capacity, wilting point and initial soil water.
+- Infiltration-capacity scale modifies the daily infiltration limit independently.
+- L0 water state caches parent-equivalent soil scales so whole-world daily stepping does not reconstruct L1 normalization.
+- Saturation-preserving L0→L1 soil-water refinement under heterogeneous child capacities.
+- Local-capacity validation for standalone L1, continental L0, mixed-resolution ownership, aggregation and dynamic-water persistence.
+- Dedicated capacity-aware regression coverage for L0/L1 initialization, infiltration response, partial-parent conservation, aggregation, invalid over-capacity state and persistence semantics.
+- `docs/AUDIT_v0.7.md` and updated soil documentation.
+
+### Changed
+
+- L1 child soil-water depth is now heterogeneous when child storage capacities differ; refinement preserves parent saturation instead of copying uniform soil depth.
+- Multiresolution-water persistence advances to format v2 because local soil-capacity validity semantics changed. Format v1 is explicitly rejected rather than silently reinterpreted.
+- Existing C ABI water layouts and `World::save()` persistence remain unchanged.
+
+### Deliberately unchanged
+
+- Snow, surface-water and groundwater refinement still use parent depth because v0.7 introduced no spatial capacity field for those stores.
+- Routing topology, channel transfer, weather-forcing boundaries and global time ownership are unchanged.
+- Soil modifiers remain synthetic scaffolding rather than measured pedology.
+
 ## 0.7.0
 
 ### Added
