@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(worldsim VERSION 0.9.0 LANGUAGES C CXX)
+project(worldsim VERSION 0.10.0 LANGUAGES C CXX)
 
 option(WORLDSIM_BUILD_TESTS "Build WorldSim tests" ON)
 
@@ -14,11 +14,14 @@ add_library(worldsim
     src/multiresolution_water_persistence.cpp
     src/weather.cpp
     src/weather_persistence.cpp
+    src/simulation.cpp
+    src/simulation_persistence.cpp
     src/persistence.cpp
     src/c_api.cpp
     src/soil_c_api.cpp
     src/multiresolution_water_c_api.cpp
     src/weather_c_api.cpp
+    src/simulation_c_api.cpp
 )
 add_library(worldsim::worldsim ALIAS worldsim)
 
@@ -52,6 +55,9 @@ target_link_libraries(worldsim_multiresolution_water_benchmark PRIVATE worldsim:
 add_executable(worldsim_weather_benchmark benchmarks/benchmark_weather.cpp)
 target_link_libraries(worldsim_weather_benchmark PRIVATE worldsim::worldsim)
 
+add_executable(worldsim_simulation_benchmark benchmarks/benchmark_simulation.cpp)
+target_link_libraries(worldsim_simulation_benchmark PRIVATE worldsim::worldsim)
+
 if(WORLDSIM_BUILD_TESTS)
     enable_testing()
     add_executable(worldsim_tests tests/test_world.cpp)
@@ -83,6 +89,14 @@ if(WORLDSIM_BUILD_TESTS)
     add_executable(worldsim_weather_atomicity_tests tests/test_weather_atomicity.cpp)
     target_link_libraries(worldsim_weather_atomicity_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_weather_atomicity_tests COMMAND worldsim_weather_atomicity_tests)
+
+    add_executable(worldsim_simulation_tests tests/test_simulation.cpp)
+    target_link_libraries(worldsim_simulation_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_simulation_tests COMMAND worldsim_simulation_tests)
+
+    add_executable(worldsim_simulation_migration_tests tests/test_simulation_migration.cpp)
+    target_link_libraries(worldsim_simulation_migration_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_simulation_migration_tests COMMAND worldsim_simulation_migration_tests)
 
     add_executable(worldsim_continental_water_tests tests/test_continental_water.cpp)
     target_link_libraries(worldsim_continental_water_tests PRIVATE worldsim::worldsim)
@@ -131,4 +145,21 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_weather_c_api_tests PRIVATE worldsim::worldsim)
     set_target_properties(worldsim_weather_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
     add_test(NAME worldsim_weather_c_api_tests COMMAND worldsim_weather_c_api_tests)
+
+    add_executable(worldsim_simulation_c_api_tests tests/test_simulation_c_api.c)
+    target_link_libraries(worldsim_simulation_c_api_tests PRIVATE worldsim::worldsim)
+    set_target_properties(worldsim_simulation_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
+    add_test(NAME worldsim_simulation_c_api_tests COMMAND worldsim_simulation_c_api_tests)
+
+    add_test(NAME worldsim_cli_simulation_demo
+        COMMAND worldsim_cli demo worldsim_cli_simulation.ws)
+    add_test(NAME worldsim_cli_simulation_run
+        COMMAND worldsim_cli simulation-run worldsim_cli_simulation.ws worldsim_cli_simulation.wsc 2)
+    set_tests_properties(worldsim_cli_simulation_run PROPERTIES DEPENDS worldsim_cli_simulation_demo)
+    add_test(NAME worldsim_cli_simulation_resume
+        COMMAND worldsim_cli simulation-resume worldsim_cli_simulation.wsc 3)
+    set_tests_properties(worldsim_cli_simulation_resume PROPERTIES DEPENDS worldsim_cli_simulation_run)
+    add_test(NAME worldsim_cli_simulation_cleanup
+        COMMAND ${CMAKE_COMMAND} -E rm -f worldsim_cli_simulation.ws worldsim_cli_simulation.wsc)
+    set_tests_properties(worldsim_cli_simulation_cleanup PROPERTIES DEPENDS worldsim_cli_simulation_resume)
 endif()

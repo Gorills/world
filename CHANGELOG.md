@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.10.0
+
+### Added
+
+- `SimulationState` as the application-level owner of persistent `World` history, derived continental topology, `WeatherState` and `MultiresolutionWaterState`.
+- One exact simulation-day invariant across weather, coarse water and every refined water tile.
+- Unified day/refinement/aggregation/surface-disturbance command boundary with const component views.
+- Versioned compound simulation checkpoint containing World, Weather and Multiresolution Water as one generation while rebuilding topology from World on load.
+- Strict checkpoint section ordering/length validation and streaming FNV-1a corruption checksums.
+- Validated same-directory temporary checkpoint publication with atomic target replacement; an existing target is never truncated before the replacement generation is complete.
+- `SimulationState::from_world()` migration path preserving existing materialized L2 history from pre-v0.10 World saves.
+- Opaque `simulation_c_api.h` handle for unified create/query/advance/refine/aggregate/disturb/checkpoint behavior without exposing mutable component handles.
+- CLI `simulation-run` and `simulation-resume` commands, including zero-day migration-only checkpoint creation.
+- Direct C++ checkpoint regressions for canonical bytes, exact reload/future evolution, corruption, truncation, global/component clock mismatch and replacement.
+- C ABI regression for exact weather/coarse/refined checkpoint round-trip and deterministic future equivalence.
+- CLI CTest chain covering legacy `demo` save → compound `simulation-run` → in-place `simulation-resume`.
+- Europe-scale unified checkpoint benchmark/gate with 449,208 L0 cells, 64 refined parents, persistent L2 history and exact next-day equivalence after reload.
+- `docs/SIMULATION.md` and `docs/AUDIT_v0.10.md`.
+
+### Fixed / hardened
+
+- Windows checkpoint durability flush now opens the completed temporary checkpoint with writable access before `FlushFileBuffers`; the full MSVC shared-library suite exercises checkpoint save/load.
+- C ABI regional sampling explicitly selects the `WorldPosition` overload instead of relying on an ambiguous braced conversion.
+- Compound load reconstructs topology from the checkpoint's World before loading water and rejects component/world identity or global-clock mismatch before exposing state.
+- Checkpoint save revalidates the complete assembled container and all section checksums before atomic publication.
+- Migration regression verifies exact legacy L2 disturbance history survives the new lifecycle and compound checkpoint.
+
+### Observed Europe-scale checkpoint performance
+
+One GCC Release CI observation on the 449,208-L0 / 64-refined fixture measured approximately:
+
+- unified simulation construction: 818 ms;
+- five unified days: 821 ms;
+- checkpoint save: 163 ms;
+- checkpoint load including topology reconstruction: 919 ms;
+- checkpoint size: 18,175,376 bytes (~17.33 MiB);
+- peak RSS: 229,872 KiB;
+- maximum relative water-balance residual: `5.895e-9`.
+
+These are environment-specific observations, not API guarantees.
+
+### Deliberately unchanged
+
+- Existing World, Weather and Multiresolution Water component formats remain versioned independently and retain their existing semantics.
+- Continental topology remains derived rather than becoming serialized authority.
+- Existing standalone C++/C APIs and focused CLI solver paths remain available for compatibility and testing.
+- FNV-1a is corruption detection, not cryptographic authentication.
+- Binary persistence still uses native POD representation; cross-endian save portability is not yet guaranteed.
+- POSIX publication does not yet claim full power-loss durability of directory metadata because the parent directory is not explicitly fsynced after rename.
+- Persistent in-channel travel-time/flood-wave state, L1 atmospheric downscaling, lateral groundwater, multi-layer soil, wetlands/floodplains, vegetation and erosion remain deferred.
+
 ## 0.9.0
 
 ### Added

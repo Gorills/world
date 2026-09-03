@@ -1,6 +1,6 @@
-# WorldSim v0.9.0 — authoritative daily weather
+# WorldSim v0.10.0 — unified simulation checkpoints
 
-Headless C++20 simulation core for a large persistent world. v0.9 adds an explicit whole-world transient atmosphere while preserving the v0.8 conservative L0/L1 water ownership and soil-capacity contracts.
+Headless C++20 simulation core for a large persistent world. v0.10 puts persistent world history, transient weather and conserved multiresolution water behind one application-level lifecycle and one compound checkpoint generation.
 
 ## Implemented
 
@@ -14,34 +14,49 @@ Headless C++20 simulation core for a large persistent world. v0.9 adds an explic
 - Europe-scale world bounds without eager L1/L2 allocation.
 - Deterministic procedural terrain, climate and soil scaffolding.
 - Configurable sea-level datum.
-- Whole-world authoritative L0 drainage and stable basin/outlet topology.
-- Fixed 8×8 authoritative L1 refinement with stable cross-tile outlet/ingress edges.
-- Authoritative L0 dynamic water history for every world cell:
-  - exact integer global day;
-  - snow, surface water, soil water and groundwater;
-  - rain/snow, melt, infiltration, ET, percolation, baseflow and runoff;
-  - deterministic routing through the continental drainage DAG;
-  - whole-world water-balance report.
-- Conservative multiresolution water ownership with sparse detailed L1 refinement.
-- Deterministic spatial soil properties and capacity-aware water buckets.
-- Saturation-preserving L0→L1 soil-water transfer under heterogeneous child capacities.
-- Explicit whole-world L0 `WeatherState`:
-  - exact integer weather day;
-  - persistent temperature and moisture anomalies;
-  - spatially coherent ~32 km synoptic innovations;
-  - temporal and neighbor memory;
-  - intermittent precipitation anchored to static climate over long runs;
-  - transient mean air temperature and PET forcing.
-- Stable weather→hydrology forcing boundary: water still consumes precipitation, temperature and PET rather than owning atmosphere.
-- Atomic weather + continental-water and weather + multiresolution-water daily helpers with exact clock alignment.
-- Separate versioned persistence for weather and multiresolution water; existing `World::save()` remains compatible with its prior formats.
-- Additive weather, multiresolution-water and soil C ABI extensions; existing water POD layouts remain unchanged.
-- CLI `weather-water` command in addition to legacy smooth-forcing commands.
-- Regression coverage for weather determinism/coherence, 10-year climate anchoring across multiple world identities, coupled atomicity, persistence and C ABI behavior.
-- CI: GCC/Clang warnings-as-errors, ASan/UBSan, MSVC static smoke and Windows shared-library consumers.
-- Europe-scale water and weather+water benchmark executables.
+- Whole-world authoritative L0 drainage and fixed 8×8 authoritative L1 refinement.
+- Capacity-aware dynamic water with conservative coarse/fine ownership.
+- Explicit whole-world transient `WeatherState` with coherent daily precipitation, temperature and PET forcing.
+- `SimulationState` as the application-level owner of:
+  - `World` persistent L2 history;
+  - derived continental topology;
+  - `WeatherState`;
+  - `MultiresolutionWaterState`.
+- One exact simulation day shared by weather, coarse water and every refined water tile.
+- Runtime refinement, aggregation, daily advance and persistent surface mutation through the unified owner.
+- Compound versioned checkpoints containing World + Weather + Multiresolution Water as one validated generation.
+- Checkpoint section lengths/checksums, strict corruption/truncation checks and component identity/clock validation.
+- Same-directory temporary checkpoint publication with validated atomic replacement of an existing target.
+- Migration from existing `World::save()` files while preserving materialized L2 history.
+- Opaque `ws_simulation_state` C ABI without mutable component-handle escape.
+- CLI `simulation-run` and `simulation-resume` paths.
+- GCC/Clang warnings-as-errors, ASan/UBSan, and complete MSVC shared-library consumer tests.
+- Europe-scale water, weather+water and unified checkpoint benchmarks in GCC CI.
 
 ## Core ownership invariants
+
+### Simulation lifecycle
+
+```text
+SimulationState
+├── World                      authoritative persistent L2 history
+├── Continental topology       derived from World
+├── WeatherState               authoritative transient atmosphere
+└── MultiresolutionWaterState  authoritative conserved water
+```
+
+Component views exposed by `SimulationState` are const. Application-level state changes go through simulation commands.
+
+### Time
+
+```text
+simulation.day
+== weather.day
+== multiresolution_water.day
+== every refined water tile day
+```
+
+Daily weather is prepared first, authoritative water advances atomically, and only then is weather committed. A rejected water step cannot split clocks.
 
 ### Water
 
@@ -59,19 +74,7 @@ The same conserved water volume is never independently advanced at both resoluti
 
 ### Atmosphere
 
-Static `ClimateSample` is the reproducible long-run baseline. `WeatherState` owns transient atmospheric anomaly state only. Hydrology consumes resulting forcing records and does not mutate atmosphere.
-
-### Time
-
-Authoritative weather and multiresolution water each carry an exact integer day. Coupled stepping requires equality before the step and advances both by exactly one day.
-
-## Weather calibration
-
-The initial intermittent-storm formulation was rejected by regression because it generated only about `0.646×` the static climate precipitation target over the 10-year calibration fixture.
-
-Only the linear storm-intensity multiplier was recalibrated, leaving wet/dry frequency and anomaly dynamics unchanged. The original 10-year fixture is now approximately `0.9997×` its climatological precipitation target. A second 10-year regression matrix covers several seeds and partial/misaligned world bounds so the default is not accepted from one identity alone.
-
-This validates consistency with WorldSim's synthetic climate field; it is not a claim that the generated weather reproduces observed European statistics.
+Static `ClimateSample` remains the reproducible long-run baseline. `WeatherState` owns transient atmospheric anomaly state. Hydrology consumes precipitation, temperature and PET forcing records rather than embedding atmosphere.
 
 ## Conservation
 
@@ -82,23 +85,38 @@ storage_before + terrestrial_precipitation
 ≈ storage_after + terrestrial_ET + terminal_outflow
 ```
 
-The balance includes coarse-owned L0 stores plus refined-owned L1 stores, never two copies of the same parent water.
+The audited Europe fixture continues to observe a maximum relative daily balance residual of about `5.9e-9` under weather-driven forcing.
 
-On the audited Europe fixture the observed maximum relative daily balance residual remains about `5.9e-9` under weather-driven forcing.
+## Compound persistence
 
-## Persistence
+`SimulationState::save_checkpoint()` publishes one generation with exactly three authoritative sections:
 
-World, weather and multiresolution water are explicit state authorities with separate versioned files.
+1. World;
+2. Weather;
+3. Multiresolution Water.
 
-- `World::save()` persists world configuration and materialized L2 history.
-- weather persistence stores exact day, weather parameters and L0 anomaly state.
-- multiresolution-water persistence stores exact day, coarse stores and sparse refined ownership.
+Continental topology is derived from World and is rebuilt on load rather than serialized as another authority.
 
-Loaders reject wrong-world identity, malformed/truncated state and inconsistent local validity according to their formats.
+The save path serializes component sections privately, records byte lengths and FNV-1a corruption checksums, assembles a same-directory publish file, validates the completed container, flushes it, then atomically replaces the target. Failures before publication leave an existing target untouched.
 
-v0.9 does **not** yet provide one transactional compound checkpoint across all three files. A process failure between independent saves can leave different generations; coupled runtime APIs detect clock/identity mismatches but do not automatically recover the previous complete generation. The v0.9 audit selects a unified simulation/checkpoint owner as the next major dependency before adding another persistent conserved subsystem such as channel travel-time storage.
+The loader validates container structure/checksums, loads World, rebuilds topology, loads weather/water against that identity, then requires all component clocks to equal the checkpoint global day before exposing state.
 
-Current binary formats use native POD representations; portable cross-endian save files are not yet a guarantee.
+FNV-1a is accidental-corruption detection, not cryptographic authentication. Current binary persistence uses native POD representations; cross-endian save-file portability is not yet guaranteed. POSIX publication is atomic under normal filesystem rename semantics, but v0.10 does not claim full power-loss durability of the directory entry because the parent directory is not explicitly fsynced after rename.
+
+See `docs/SIMULATION.md` for the complete contract.
+
+## Legacy World migration
+
+Existing `World::save()` files remain readable and their format is unchanged.
+
+A pre-v0.10 World can become a day-zero unified simulation without losing materialized L2 history:
+
+```cpp
+auto world = worldsim::World::load("legacy.ws");
+auto simulation = worldsim::SimulationState::from_world(std::move(world));
+```
+
+Weather and dynamic water start from their deterministic day-zero state because those transient authorities were not stored inside the legacy World file.
 
 ## Scientific/model limitations
 
@@ -106,12 +124,9 @@ Current binary formats use native POD representations; portable cross-endian sav
 - Weather is a coherent stochastic L0 layer, not numerical weather prediction.
 - No L1 atmospheric downscaling, pressure, wind, humidity, radiation or explicit cloud physics.
 - PET remains a simple temperature proxy.
-- Soil remains one vertically aggregated bucket.
-- No lateral groundwater aquifer state.
-- Channel routing still moves daily quickflow/baseflow through the DAG within one day; persistent travel time/flood-wave hydraulics are not modeled.
+- Soil remains one vertically aggregated bucket with no lateral groundwater aquifer state.
+- Channel routing still moves daily quickflow/baseflow through the drainage DAG within one day; persistent in-channel travel-time/flood-wave state is not yet modeled.
 - No wetlands, floodplains, erosion, sediment or vegetation feedback.
-
-See `docs/WEATHER.md`, `docs/MULTIRESOLUTION_WATER.md`, `docs/SOIL.md`, `docs/ARCHITECTURE.md` and `docs/AUDIT_v0.9.md`.
 
 ## Build
 
@@ -133,54 +148,70 @@ Europe-scale benchmarks:
 ```bash
 ./build/worldsim_multiresolution_water_benchmark
 ./build/worldsim_weather_benchmark
+./build/worldsim_simulation_benchmark
 ```
 
-Reported timings and RSS are environment-specific observations, not API guarantees.
+One GCC Release v0.10 checkpoint observation on the 449,208-L0 / 64-refined fixture measured approximately:
+
+- checkpoint save: `163 ms`;
+- checkpoint load including topology reconstruction: `919 ms`;
+- checkpoint size: `18,175,376 bytes` (`~17.33 MiB`);
+- peak benchmark RSS: `229,872 KiB`.
+
+Timings/RSS are environment-specific observations, not API guarantees.
 
 ## CLI
 
-Create a demo save:
+Create a legacy World save:
 
 ```bash
 ./build/worldsim_cli demo demo.ws
 ```
 
-Authoritative whole-world drainage:
+Migrate that World into a compound simulation, advance 30 days and checkpoint:
+
+```bash
+./build/worldsim_cli simulation-run demo.ws campaign.wsc 30
+```
+
+Resume the exact compound generation for another 30 days and atomically replace the checkpoint:
+
+```bash
+./build/worldsim_cli simulation-resume campaign.wsc 30
+```
+
+A zero-day `simulation-run` is valid for migration-only checkpoint creation.
+
+Legacy focused solver paths remain available:
 
 ```bash
 ./build/worldsim_cli continent demo.ws 25
-```
-
-Legacy deterministic coarse water forcing:
-
-```bash
 ./build/worldsim_cli continental-water demo.ws 365
-```
-
-Weather-driven coarse water:
-
-```bash
 ./build/worldsim_cli weather-water demo.ws 365
-```
-
-Standalone detailed L1 solver:
-
-```bash
 ./build/worldsim_cli watercycle demo.ws 3 4 365
 ```
+
+## Documentation
+
+- `docs/ARCHITECTURE.md` — current ownership and scheduling decisions.
+- `docs/SIMULATION.md` — v0.10 lifecycle/checkpoint/C ABI/CLI contract.
+- `docs/WEATHER.md` — transient weather model.
+- `docs/MULTIRESOLUTION_WATER.md` — conservative coarse/fine water ownership.
+- `docs/SOIL.md` — static spatial soil properties and capacity integration.
 
 ## Audits
 
 - `docs/AUDIT_v0.1.md` — spatial/persistence foundation before v0.2.
 - `docs/AUDIT_v0.2.md` — regional hydrology before v0.3.
 - `docs/AUDIT_v0.3.md` — authoritative drainage boundary before v0.4.
-- `docs/AUDIT_v0.4.md` — rejects an L1-only scheduler and establishes the v0.5 L0 state boundary.
-- `docs/AUDIT_v0.5.md` — validates the coarse boundary and selects v0.6 ownership.
-- `docs/AUDIT_v0.6.md` — validates ownership and selects v0.7 spatial properties.
-- `docs/AUDIT_v0.7.md` — validates soil properties and selects capacity-aware water integration.
-- `docs/AUDIT_v0.8.md` — selects authoritative transient weather over channel hydraulics.
-- `docs/AUDIT_v0.9.md` — full accumulated audit; selects unified simulation ownership/checkpointing before adding another dynamic state authority.
+- `docs/AUDIT_v0.4.md` — establishes the complete L0 dynamic-water boundary.
+- `docs/AUDIT_v0.5.md` — validates coarse water and selects conservative refinement ownership.
+- `docs/AUDIT_v0.6.md` — validates ownership and selects spatial soil properties.
+- `docs/AUDIT_v0.7.md` — validates soil properties and selects capacity-aware dynamics.
+- `docs/AUDIT_v0.8.md` — selects authoritative transient weather.
+- `docs/AUDIT_v0.9.md` — full accumulated audit selecting unified simulation/checkpoint ownership.
+- `docs/AUDIT_v0.10.md` — validates the unified lifecycle and selects persistent channel travel-time state as the next conserved subsystem boundary.
 
 ## Next bounded milestone
 
-v0.10 should establish one `SimulationState` lifecycle and compound checkpoint for persistent world history + weather + multiresolution water. Channel travel-time/flood-wave state should be added only after that ownership/persistence boundary exists.
+With compound ownership/checkpointing established, the next architecture-level hydrology limitation is persistent in-channel travel time. The next slice should keep channel storage inside `MultiresolutionWaterState`, conserve it across L0/L1 routing boundaries, advance it on the same global clock and persist it through the existing Multiresolution Water checkpoint section rather than creating another independently coordinated authority.

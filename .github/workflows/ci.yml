@@ -36,6 +36,9 @@ jobs:
       - name: Europe-scale weather benchmark
         if: matrix.compiler == 'gcc'
         run: ./build/worldsim_weather_benchmark
+      - name: Europe-scale simulation checkpoint benchmark
+        if: matrix.compiler == 'gcc'
+        run: ./build/worldsim_simulation_benchmark
 
   sanitizers:
     runs-on: ubuntu-latest

@@ -1,87 +1,98 @@
-# Architecture decisions — v0.9
+# Architecture decisions — v0.10
 
 ## 1. Resolution hierarchy
 
 | Level | Resolution | Purpose | Storage |
 |---|---:|---|---|
-| L0 | 8192 m | static climate baseline + transient weather + authoritative continental drainage + default dynamic water history + parent-equivalent soil properties | whole-world derived topology/properties + compact weather/water state |
+| L0 | 8192 m | static climate baseline + transient weather + authoritative continental drainage + default dynamic water history + parent-equivalent soil | derived topology/properties + compact weather/water state |
 | L1 | 1024 m | regional terrain, authoritative drainage refinement + selectively authoritative detailed water + spatial soil heterogeneity | topology/properties derived; dynamic water sparse |
 | L2 | 64 m | local persistent environmental history | lazy persistent |
 | Entity | continuous | people/animals/items/buildings later | future |
 
-The hierarchy remains fixed. Configurability is deferred until there is a concrete requirement that outweighs the extra persistence and cross-level complexity.
+The hierarchy remains fixed. Configurability is deferred until a concrete requirement outweighs the persistence and cross-level complexity.
 
-## 2. World truth vs materialization
+## 2. Unified runtime ownership
+
+v0.10 adds the application-level lifecycle boundary that previous milestones deliberately lacked:
+
+```text
+SimulationState
+├── World                      authoritative persistent L2 history
+├── Continental topology       derived from World
+├── WeatherState               authoritative transient atmosphere
+└── MultiresolutionWaterState  authoritative conserved water
+```
+
+`SimulationState` exposes const component views. Its application-level mutation surface is deliberately small:
+
+- one-day coupled advance;
+- water refinement;
+- water aggregation;
+- persistent surface disturbance;
+- compound checkpoint save/load.
+
+Lower-level standalone APIs remain available for focused solvers, tests and compatibility, but a normal evolving-world application no longer needs to coordinate weather/water generations itself.
+
+Continental topology is derived from `World`; it is not another mutable or serialized authority.
+
+## 3. World truth vs materialization
 
 The whole world has one truth but does not need one resolution everywhere.
 
 - Static base fields can be reproduced from seed + coordinates.
-- Time-dependent state that must exist everywhere is kept cheaply at L0 unless a concrete subsystem requires sparse refinement.
+- Time-dependent state that must exist everywhere is kept cheaply at L0 unless a subsystem requires sparse refinement.
 - Persistent or active fine detail exists only where history requires it.
-- Querying climate, terrain or soil properties does not materialize L1/L2 state.
-- Materializing dynamic water changes ownership and is therefore observable simulation state.
-- Weather is explicit dynamic state but remains L0-only in v0.9; it does not materialize L1/L2 atmosphere.
-- External callers do not receive mutable access to authoritative C++ containers; mutations go through commands.
-- Derived analyses are not promoted to authoritative truth if they depend on arbitrary query boundaries.
+- Querying climate, terrain, weather samples or soil properties does not materialize L1/L2 history.
+- Materializing dynamic water changes conserved ownership and is observable simulation state.
+- Weather is explicit dynamic state but remains L0-only.
+- External callers do not receive mutable C++ container access through the unified owner.
+- Derived analyses are not promoted to authoritative state if they can be reconstructed from authoritative inputs.
 
-v0.3 established authoritative continental topology. v0.4 added standalone detailed L1 water. v0.5 added complete L0 water history and one global day. v0.6 made sparse L1 tiles true refinements of that evolving history. v0.7 added deterministic static L0/L1 soil properties. v0.8 made those properties part of the bucket model. v0.9 adds the first independent whole-world transient atmospheric state while keeping the established water ownership boundary intact.
+The milestone sequence is now:
 
-## 3. Static climate vs transient weather
+- v0.3: authoritative whole-world drainage topology;
+- v0.4: standalone detailed L1 water;
+- v0.5: complete L0 water history + global day;
+- v0.6: conservative sparse L1 water ownership;
+- v0.7: deterministic spatial soil properties;
+- v0.8: capacity-aware water;
+- v0.9: authoritative transient weather;
+- v0.10: unified runtime ownership + compound checkpoint generation.
 
-Static `ClimateSample` remains reproducible long-run world truth. It provides:
+## 4. Static climate vs transient weather
 
-- mean temperature baseline;
-- annual precipitation baseline;
-- continentality.
+Static `ClimateSample` remains reproducible long-run world truth and provides mean temperature, annual precipitation and continentality.
 
-`WeatherState` owns transient daily atmospheric anomalies instead of changing the climate field itself.
-
-Each L0 weather cell stores only:
+`WeatherState` owns transient daily anomalies:
 
 ```text
 temperature_anomaly_c
 moisture_anomaly
 ```
 
-Climate/elevation metadata used repeatedly by the daily model is cached when `WeatherState` is constructed, but it is derived and rebuilt on persistence load.
+Daily forcing combines static climate, deterministic seasonality, transient anomalies and coherent storm intermittency. Hydrology consumes precipitation, temperature and PET through the established forcing boundary.
 
-Daily forcing is obtained by combining:
+Weather owns atmosphere; water owns conserved water. `SimulationState` owns their lifecycle, not their internal physics.
 
-```text
-static climate
-+ deterministic seasonal cycle
-+ transient weather anomalies
-+ coherent storm intermittency
-```
+## 5. Weather coherence and calibration
 
-The resulting precipitation, temperature and PET values use the same forcing structures the water model already consumed before v0.9.
+Independent random values per 8192 m cell would create checkerboard forcing. Weather innovations are therefore evaluated on a 4×4-L0 synoptic lattice (~32 km at the fixed hierarchy) and interpolated to L0 cells.
 
-Weather therefore owns atmosphere and water owns water; neither embeds the other's conserved state.
+Transient anomalies combine:
 
-## 4. Weather spatial/temporal coherence
+- previous-day autoregressive persistence;
+- bounded four-neighbor memory;
+- spatially coherent daily innovations.
 
-Independent random values at every 8192 m cell would create checkerboard forcing. v0.9 instead evaluates deterministic daily innovations on a 4×4-L0 synoptic lattice (approximately 32 km at the fixed hierarchy) and interpolates them to L0 cells.
+Storm intermittency uses persistent moisture anomaly plus a coherent daily storm innovation. Long-run regression anchors generated precipitation to static climate. The initial intermittent model produced roughly `0.646×` climatology; only the linear storm-intensity multiplier was recalibrated, bringing the original 10-year fixture to approximately `0.9997×` while retaining wet/dry frequency behavior.
 
-Transient anomalies then combine:
+This remains synthetic stochastic weather scaffolding, not numerical weather prediction.
 
-- autoregressive persistence from the previous day;
-- a bounded contribution from the four orthogonal neighboring L0 states;
-- the new spatially coherent daily innovation.
+## 6. Soil property truth and effective buckets
 
-This provides bounded spatial and temporal coherence without storing a second fine atmospheric raster.
+`SoilProperties` contains positive dimensionless storage-capacity and infiltration-capacity modifiers.
 
-Storm intermittency uses the persistent moisture anomaly plus an independent coherent daily storm innovation. A 10-year regression guards the stronger climate invariant: intermittency must not silently change the long-run static annual-precipitation baseline. The initial implementation failed this check at roughly 0.646 of climatology; the default linear storm-intensity scale was calibrated so the regression fixture is approximately 0.9997 while wet-area frequency remains unchanged.
-
-This is synthetic stochastic weather scaffolding, not atmospheric dynamics or numerical weather prediction.
-
-## 5. Soil property truth and effective bucket parameters
-
-`SoilProperties` contains two positive dimensionless modifiers:
-
-- storage-capacity scale;
-- infiltration-capacity scale.
-
-The hydrology parameters remain configurable reference values. Effective local values are derived as:
+Effective local bucket parameters are:
 
 ```text
 soil_capacity         = reference_soil_capacity         × storage_scale
@@ -91,21 +102,11 @@ initial_soil_water    = reference_initial_soil_water    × storage_scale
 infiltration_capacity = reference_infiltration_capacity × infiltration_scale
 ```
 
-Scaling the three storage thresholds and initial water together preserves their relative bucket geometry and configured initial saturation.
+L1 heterogeneity is normalized by actual world-overlap area so its area-weighted parent equivalent reproduces the direct L0 property, including partial boundary parents. Soil properties are derived static truth and are not serialized.
 
-The parent L0 property is directly reproducible from world seed + climate coordinate. L1 children have deterministic heterogeneity but are normalized by actual world-overlap area so their area-weighted mean is the direct parent value:
+## 7. Water ownership and conservation
 
-```text
-parent_scale = Σ(child_scale × child_overlap_area)
-               --------------------------------------
-                    Σ(child_overlap_area)
-```
-
-This also holds for partial parents at configured world boundaries. Soil properties are derived static world truth and are not serialized.
-
-## 6. Water ownership and coarse/fine conservation
-
-Dynamic conserved water fields cannot exist as two independently advancing copies.
+Dynamic conserved water cannot exist as two independently advancing copies.
 
 ```text
 coarse-owned:
@@ -117,191 +118,202 @@ refined-owned:
     L1 8×8 stores authoritative
 ```
 
-Materialization and aggregation conserve separately:
+Materialization and aggregation conserve snow water equivalent, surface water, soil water and groundwater using actual overlap area.
 
-- snow water equivalent;
-- surface water;
-- soil water;
-- groundwater.
-
-Transfer uses actual world-overlap area. Soil uses saturation-preserving refinement because child capacities differ:
+Soil refinement preserves parent saturation because child capacities differ:
 
 ```text
 parent_saturation = parent_soil_water / parent_soil_capacity
 child_soil_water  = parent_saturation × child_soil_capacity
 ```
 
-The v0.7 parent-equivalent capacity invariant makes this volume-conservative by construction. Snow, surface water and groundwater continue to transfer by parent depth because no spatial capacity field currently applies to those stores.
+The parent-equivalent capacity invariant makes the transfer volume-conservative. Snow, surface water and groundwater still transfer by parent depth because no spatial capacity field currently applies to those stores.
 
-Weather does not participate in this ownership transfer. A refined L1 water tile receives the current atmospheric forcing of its L0 weather parent.
+## 8. Coordinates and indexing
 
-## 7. Coordinates
+World positions are double-precision meters. Grid coordinates are signed 64-bit integers with mathematical floor semantics.
 
-World positions are double-precision meters. Grid coordinates are signed 64-bit integers and use mathematical floor semantics, including negative positions.
+World bounds are limited by the floating-point precision required by 64 m L2 cells rather than by the formal int64 range.
 
-Configured world bounds are limited by floating-point precision required by 64 m L2 cells rather than by the much larger formal int64 range.
+Raster indexing rejects extreme out-of-range coordinates without signed-overflowing subtraction. Continental water, refined water, standalone detailed hydrology and weather use checked bounds/representability before indexing.
 
-Raster indexing must reject extreme out-of-range coordinates without signed arithmetic overflow. Continental water, multiresolution refined water, standalone detailed hydrology and weather use checked lower bounds/representability and unsigned non-negative deltas where required.
+## 9. Hydrology topology
 
-## 8. Hydrology representation
-
-Water topology is not represented only as a raster.
-
-The L0 whole-world result owns basin/outlet topology. Fixed 8×8 L1 tiles refine that topology. Hydrology contains raster state plus graph semantics:
+Water topology includes raster and graph semantics:
 
 - per-cell terrain/fill elevation, local yield, accumulated discharge and downstream coordinate;
-- graph-like river edges;
-- explicit lake records with downstream connectivity;
-- stable cross-tile ingress/outlet edges for authoritative L1 refinement.
+- river edges;
+- lake records with downstream connectivity;
+- stable cross-tile ingress/outlet edges for L1 refinement.
 
-The mixed scheduler uses the immutable L0 drainage DAG as the parent ordering/connection truth. A refined parent replaces the local L0 bucket/routing interior, not the continental downstream relation.
+The whole-world L0 drainage DAG is the parent ordering/connection truth. A refined parent replaces local bucket/routing interior state without replacing the parent L0 downstream relation.
 
-Authoritative refinement inherits the coarse parent's ocean classification for every active L1 child. The current ownership boundary therefore never creates a mixed land/ocean child mask inside one L0 parent.
+Authoritative refinement inherits the coarse parent's ocean classification for all active L1 children; the current model does not create mixed land/ocean ownership within a single L0 parent.
 
-## 9. Global time and weather/water scheduling
+## 10. Global time and scheduling
 
-`WeatherState`, `ContinentalWaterState` and `MultiresolutionWaterState` use exact signed 64-bit integer days.
+The unified invariant is:
 
-Within multiresolution water, every sparse refined tile records the same day as the coarse owner. A mismatch is invalid.
+```text
+SimulationState.day
+== WeatherState.day
+== MultiresolutionWaterState.day
+== every refined tile day
+```
 
-For weather-driven coupled stepping, weather and water must also start on the same day and the same L0 grid/world identity.
+One day is advanced as:
 
 ```text
 prepare current-day weather forcing
 prepare next WeatherState in scratch storage
         ↓
-advance authoritative water atomically
+advance authoritative coarse/refined water atomically
         ↓
 commit next WeatherState
 ```
 
-This preserves the stronger clock invariant:
+A rejected hydrology input cannot advance weather independently.
 
-```text
-weather.day == water.day
-```
-
-A hydrology rejection cannot advance weather independently.
-
-Inside the water step, the existing L0 topological order remains unchanged:
+Inside water, the L0 topological order remains:
 
 ```text
 unrefined parent
-    → capacity-aware coarse bucket step
+    → capacity-aware coarse bucket
     → coarse route
 
 refined parent
-    ← all upstream channel ingress already collected
-    → capacity-aware detailed 8×8 L1 step using parent L0 weather forcing
+    ← upstream channel ingress
+    → capacity-aware detailed 8×8 L1 bucket/routing
     → one external outlet volume
     → parent L0 downstream relation
 ```
 
-v0.9 deliberately does not invent L1 atmospheric downscaling before a separate elevation/orographic/sub-grid forcing contract exists.
+Refined L1 water currently receives its parent L0 atmospheric forcing. No L1 weather downscaling is invented without a separate elevation/orographic/sub-grid contract.
 
-## 10. Forcing boundary and legacy helpers
+## 11. Forcing boundary and compatibility helpers
 
-Hydrology consumes:
+Hydrology consumes precipitation, mean air temperature and potential evapotranspiration.
 
-- precipitation;
-- mean air temperature;
-- potential evapotranspiration.
+`make_weather_daily_forcing()` exposes authoritative current-day weather through that boundary. Legacy smooth climatological helpers remain available for controlled tests and old focused CLI/API paths.
 
-That boundary predates WeatherSystem and remains the integration seam.
+PET remains a simple temperature-driven approximation because the atmosphere does not yet carry radiation, humidity or wind.
 
-`make_weather_daily_forcing()` exposes authoritative current-day weather through that boundary.
+## 12. Determinism
 
-The old smooth climatological helpers remain available for deterministic controlled tests and older CLI paths. They are no longer the only evolving-world atmospheric source.
+Terrain/climate/soil/topology use deterministic hashing and tie-breaking. Continental routing order is deterministic. Weather innovations are deterministic for world seed + coordinate + integer day.
 
-PET is still a deliberately simple temperature-driven approximation because weather does not yet carry radiation, humidity or wind.
+The unified checkpoint regression verifies:
 
-## 11. Determinism
+- byte-for-byte canonical serialization for identical simulation state;
+- exact weather/coarse/refined reload state;
+- exact deterministic next-day evolution after reload.
 
-Static terrain/climate/soil state and hydrology use deterministic hashing and explicit tie-breaking. Continental routing uses a deterministic topological order. Tile boundary connections use deterministic elevation/tie-break rules.
+Strict bit-identical floating-point results across all compilers/architectures are still not a formal public portability contract.
 
-Weather innovation fields are deterministic for the same world seed, coordinates and integer day. Persistent anomaly state plus deterministic neighbor calculations therefore gives repeatable evolution from identical state and parameters.
+## 13. Persistence and compound checkpoints
 
-Weather persistence regression verifies that a reloaded state produces exactly the same next forcing as the original state.
+The component formats remain versioned independently:
 
-Strict bit-identical cross-platform floating-point determinism remains a future contract decision.
+### World
 
-## 12. Persistence
+`World::save()` v2 stores world configuration and materialized L2 history and retains v1 read compatibility. Static terrain/climate/soil remain derived.
 
-Three persistence authorities remain distinct.
+### Multiresolution water
 
-### World persistence
+Format v2 stores world identity, hydrology parameters, exact day, complete L0 state and sparse refined ownership/state. Local soil capacities are re-derived from World identity.
 
-`World::save()` format v2 stores world configuration and persistent materialized L2 patches and retains v1 read compatibility.
+### Weather
 
-Static terrain/climate/soil properties are derived and are not serialized as rasters.
+Format v1 stores world identity, process parameters, exact day, raster metadata and per-cell anomaly state. Climate/elevation metadata is reconstructed.
 
-### Dynamic-water persistence
+### Simulation checkpoint
 
-Multiresolution-water format v2 stores:
+v0.10 adds one container generation with fixed sections:
 
-- world identity;
-- reference hydrology parameters;
-- exact global day;
-- complete L0 dynamic state;
-- sparse refined parent ownership and child states.
+```text
+World
+Weather
+Multiresolution Water
+```
 
-Effective soil capacities are re-derived from world identity.
+Topology is rebuilt from the World section rather than serialized.
 
-### Weather persistence
+The container stores one global day plus section identifiers, sizes and FNV-1a checksums. On save, the three existing component serializers write private temporary files; a complete same-directory publish file is assembled, revalidated, flushed and atomically renamed/replaced.
 
-Weather format v1 stores:
+The loader validates sizes/checksums, loads World, derives topology, loads weather/water against that identity, then requires the checkpoint global day to match both component clocks before returning `SimulationState`.
 
-- world identity;
-- weather-process parameters;
-- exact global day;
-- L0 raster metadata;
-- per-cell temperature and moisture anomalies.
+This prevents ordinary process failure during multi-file saving from exposing a mixed weather/water/world generation through the unified API.
 
-Climate/elevation metadata is reconstructed from `World` on load.
+FNV-1a is accidental-corruption detection, not cryptographic authentication. Native-POD binary encoding remains the existing format assumption. On POSIX the publish file is fsynced before rename, but the parent directory is not explicitly fsynced afterward; v0.10 therefore does not claim full power-loss durability for directory metadata.
 
-Weather and water remain separate files. v0.9 does not introduce a compound transactional disk checkpoint. Applications needing one must coordinate the two explicit state saves externally.
+## 14. Engine boundary
 
-## 13. Engine boundary
+The C ABI remains opaque-handle + POD-copy based so bindings do not depend on C++ ABI/STL layout.
 
-The base C ABI continues to use opaque handles plus POD copy functions so engine bindings do not depend on C++ ABI/STL containers.
+v0.10 adds `ws_simulation_state`, which owns the unified authority and exposes:
 
-Existing extensions remain:
+- creation/destruction;
+- global-day and ownership counts;
+- const-style regional/weather/water copies;
+- day advance;
+- refinement/aggregation;
+- persistent disturbance;
+- compound checkpoint save/load;
+- a simulation-specific error channel.
 
-- `ws_multiresolution_water_state` for dynamic-water ownership;
-- `soil_c_api.h` for derived soil queries.
+It intentionally does not expose mutable internal weather/water handles from the unified owner.
 
-v0.9 adds an opaque `ws_weather_state` and additive weather POD reports/samples. It can:
+Older standalone World/weather/water C ABIs remain compatible for focused usage.
 
-- query/simulate/persist weather independently;
-- copy current forcing;
-- advance weather and an existing multiresolution-water handle in one atomic coupled call.
+## 15. Migration and CLI lifecycle
 
-Existing water POD layouts and signatures do not change.
+`SimulationState::from_world(World)` is the migration boundary from pre-v0.10 World saves. It preserves exact World configuration/materialized L2 history and creates aligned day-zero weather/water state derived from that World.
 
-Game engines render/query the simulation and submit commands; they do not own authoritative state.
+CLI lifecycle:
 
-## 14. Scaling
+```text
+legacy .ws
+  └─ simulation-run → compound .wsc
+                         └─ simulation-resume → atomically replaced .wsc
+```
 
-The complete world now keeps compact L0 dynamic state for both water and weather.
+CTest exercises the `demo → simulation-run → simulation-resume` chain on Linux, sanitizers and MSVC shared-library builds in addition to direct C++/C ABI regressions.
 
-Per weather L0 cell, persistent transient state is two floats. Derived metadata caches overlap area and climate/elevation values for repeated daily use. No all-Europe L1/L2 atmospheric raster is allocated.
+## 16. Scaling
 
-Only selected water parents allocate 64 detailed L1 water cells plus their fixed authoritative tile topology.
+Whole-world weather and water remain compact L0 authorities; L1 water exists only for selected refined parents and L2 persistent history remains lazy.
 
-The calibrated v0.9 Europe CI fixture uses 449,208 L0 cells and 64 refined water parents. One GCC Release observation measured approximately:
+The v0.10 Europe checkpoint CI fixture uses:
 
-- weather-state creation: 205 ms;
-- 30 coupled weather + water days: 3.87 s;
-- mean coupled day: 129 ms;
-- peak RSS: 136 MiB;
-- maximum relative water-balance residual: `5.9e-9`.
+- 449,208 L0 cells;
+- 64 refined water parents;
+- persistent L2 history;
+- five warmup unified days before checkpoint;
+- exact next-day equivalence after reload.
 
-Measured timings/RSS are environment-specific observations, not API guarantees.
+One GCC Release observation measured approximately:
 
-## 15. Current strongest limitation
+- unified simulation construction: `818 ms`;
+- materialize 64 parents: `13.8 ms`;
+- five unified days: `821 ms`;
+- checkpoint save: `163 ms`;
+- checkpoint load including topology reconstruction: `919 ms`;
+- checkpoint size: `18,175,376 bytes` (`~17.33 MiB`);
+- peak RSS: `229,872 KiB`;
+- maximum relative water-balance residual: `5.895e-9`.
 
-The forcing boundary now has transient spatially coherent weather instead of only repeating climatology. The strongest remaining hydrologic architecture limitation is likely the same-day channel routing assumption: quickflow/baseflow can traverse the L0 drainage DAG within one daily step and no persistent in-channel/travel-time state exists.
+These are CI observations, not API/performance guarantees.
 
-That next problem must be treated as conserved dynamic state, including ownership across L0/L1 refinement and persistence, rather than as a cosmetic delay parameter.
+## 17. Current strongest limitation
 
-Other material deferred areas include L1 atmospheric downscaling, humidity/radiation/wind, lateral groundwater and the single-layer soil bucket. A post-v0.9 audit should confirm priority before implementation.
+With runtime ownership and compound persistence no longer blocking another conserved subsystem, the strongest hydrologic architecture limitation is the same-day channel-routing assumption. Daily quickflow/baseflow can traverse the L0 drainage DAG in one step; there is no persistent in-channel volume or travel-time/flood-wave state.
+
+The next channel-routing model should therefore be designed as conserved dynamic state that:
+
+- shares the unified global clock;
+- has explicit L0/L1 ownership semantics;
+- participates in mass balance;
+- survives refinement/aggregation without double ownership;
+- becomes a versioned section of the compound checkpoint.
+
+Other deferred material areas remain L1 atmospheric downscaling, humidity/radiation/wind, lateral groundwater, a multi-layer soil model, wetlands/floodplains and geomorphic/vegetation feedback.
