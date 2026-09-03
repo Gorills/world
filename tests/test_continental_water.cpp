@@ -183,6 +183,47 @@ int main() {
     }
     check(invalid_value_threw, "continental daily step rejects non-finite forcing atomically");
 
+    bool unsafe_finite_forcing_threw = false;
+    {
+        auto atomic_state = make_continental_water_state(world, topology, params);
+        const auto before_cells = atomic_state.cells();
+        const auto before_day = atomic_state.simulated_day();
+        auto forcing = make_smooth_continental_daily_forcing(atomic_state);
+        for (std::size_t i = 0; i < topology.cells.size(); ++i) {
+            if (!topology.cells[i].ocean) {
+                forcing[i].precipitation_mm = std::numeric_limits<float>::max();
+                forcing[i].mean_air_temperature_c = -20.0f;
+                break;
+            }
+        }
+        try {
+            (void)advance_continental_water_day(atomic_state, forcing, params);
+        } catch (const std::invalid_argument&) {
+            unsafe_finite_forcing_threw = true;
+        }
+        check(atomic_state.simulated_day() == before_day &&
+              std::memcmp(atomic_state.cells().data(), before_cells.data(),
+                          before_cells.size() * sizeof(ContinentalWaterCellState)) == 0,
+              "numerically unsafe finite forcing is rejected before any mutation");
+    }
+    check(unsafe_finite_forcing_threw,
+          "continental daily step rejects finite forcing that can overflow float water state");
+
+    bool unsafe_initial_storage_threw = false;
+    try {
+        auto unsafe_params = params;
+        unsafe_params.soil_capacity_mm = std::numeric_limits<float>::max();
+        unsafe_params.field_capacity_mm = 0.0f;
+        unsafe_params.wilting_point_mm = 0.0f;
+        unsafe_params.initial_soil_water_mm = std::numeric_limits<float>::max();
+        unsafe_params.initial_groundwater_mm = 0.0f;
+        (void)make_continental_water_state(world, topology, unsafe_params);
+    } catch (const std::invalid_argument&) {
+        unsafe_initial_storage_threw = true;
+    }
+    check(unsafe_initial_storage_threw,
+          "continental state rejects finite initial storage outside its numerical safety envelope");
+
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";
         return 1;
