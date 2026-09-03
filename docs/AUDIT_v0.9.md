@@ -94,6 +94,8 @@ A Windows shared-library CI job was added. The first run immediately exposed a b
 
 For Windows shared builds, `WINDOWS_EXPORT_ALL_SYMBOLS` is enabled so public C++ consumers such as the CLI/tests can link the same shared target. The explicit `WORLDSIM_API` C ABI annotations remain unchanged.
 
+The same gate then exposed two test-harness portability bugs that Linux semantics had hidden. The monolithic world regression tried to delete persistence fixtures while `std::ifstream` handles were still alive; Windows correctly rejected those deletions and the uncaught `filesystem_error` surfaced as CRT fast-fail `0xc0000409`. The read streams are now scoped to end before cleanup. Three C ABI persistence tests also hard-coded `/tmp`; they now use disposable relative paths in CTest's writable working directory. A final MSVC Release shared build runs the complete test suite without the former `/tmp` workaround.
+
 ### Finding D: coupled atomicity wording was stronger than the obvious implementation shape
 
 The coupled weather helpers prepare weather, advance water, then perform a defensive `day_after` equality check before committing weather. Superficially that looks like an exception point after water mutation.
