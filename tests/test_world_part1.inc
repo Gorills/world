@@ -137,10 +137,12 @@ int main() {
     const auto sx = std::filesystem::temp_directory_path() / "worldsim_order_x.ws";
     const auto sy = std::filesystem::temp_directory_path() / "worldsim_order_y.ws";
     x.save(sx); y.save(sy);
-    std::ifstream fx(sx, std::ios::binary), fy(sy, std::ios::binary);
-    const std::vector<char> bx((std::istreambuf_iterator<char>(fx)), {});
-    const std::vector<char> by((std::istreambuf_iterator<char>(fy)), {});
-    check(bx == by, "identical state serializes byte-for-byte identically");
+    {
+        std::ifstream fx(sx, std::ios::binary), fy(sy, std::ios::binary);
+        const std::vector<char> bx((std::istreambuf_iterator<char>(fx)), {});
+        const std::vector<char> by((std::istreambuf_iterator<char>(fy)), {});
+        check(bx == by, "identical state serializes byte-for-byte identically");
+    }
     std::filesystem::remove(sx);
     std::filesystem::remove(sy);
 
