@@ -56,6 +56,17 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --test-dir build-sanitize --output-on-failure
 
+  windows-static-smoke:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure static MSVC build
+        run: cmake -S . -B build-static '-DCMAKE_CXX_FLAGS=/WX /EHsc'
+      - name: Build core world test
+        run: cmake --build build-static --config Release --target worldsim_tests
+      - name: Run core world test
+        run: ctest --test-dir build-static -C Release -R '^worldsim_tests$' --output-on-failure
+
   windows-shared:
     runs-on: windows-latest
     steps:
