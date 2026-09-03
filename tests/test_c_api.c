@@ -298,7 +298,7 @@ int main(void) {
         return fail("disturbance should affect local cells");
     }
 
-    const char* path = "/tmp/worldsim_c_api_test.ws";
+    const char* path = "worldsim_c_api_test.ws";
     if (ws_world_save(world, path) != 0) {
         ws_world_destroy(world);
         return fail("save world");

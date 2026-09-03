@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.9.0
+
+### Added
+
+- Explicit whole-world L0 `WeatherState` with one exact integer global day and compact temperature/moisture anomaly state.
+- Spatially coherent daily synoptic innovations on an approximately 32 km lattice with temporal and neighboring-cell memory.
+- Intermittent precipitation, transient temperature and temperature-driven PET through the existing water forcing boundary.
+- Atomic weather-driven stepping for both continental and multiresolution water; weather commits only after the water step succeeds.
+- Separate versioned weather persistence that stores transient anomalies while reconstructing derived climate/elevation metadata from `World`.
+- Additive `weather_c_api.h` for weather creation, sampling, forcing, stepping, persistence and coupled multiresolution-water advance.
+- CLI `weather-water` command for an end-to-end authoritative weather + whole-world water run while retaining the legacy smooth-forcing command.
+- Long-run climatology regression covering precipitation-total anchoring, wet/dry intermittency and centered temperature anomalies.
+- Europe-scale 449,208-cell / 64-refined-parent / 30-day coupled weather benchmark in GCC CI.
+- `docs/WEATHER.md` and `docs/AUDIT_v0.8.md`.
+
+### Fixed / hardened
+
+- The initial storm-intermittency defaults were found by the new 10-year regression to generate only about 64.6% of the static climate precipitation baseline. The storm-intensity default is calibrated to restore approximately 99.97% on that regression fixture without changing wet-area frequency.
+- Weather persistence rejects wrong-world files, invalid raster metadata, non-finite/out-of-range anomaly state, truncation and trailing bytes.
+- Weather index lookup rejects extreme out-of-range coordinates without signed-overflowing subtraction.
+- Coupled weather/water entry points reject different worlds, grid mismatch and clock mismatch before mutation.
+
+### Deliberately unchanged
+
+- Static climate remains derived long-run world truth; weather is a transient layer around it rather than a replacement climate model.
+- Refined L1 water receives its parent L0 weather in v0.9; no 1 km atmospheric/orographic downscaling is invented yet.
+- Water ownership, routing topology, soil-capacity behavior, multiresolution-water persistence and `World::save()` formats are unchanged.
+- Legacy smooth climatological forcing helpers remain available for controlled tests and older simulation paths.
+- Channel travel-time/flood-wave state, lateral groundwater, vegetation, erosion and richer atmospheric physics remain deferred.
+
 ## 0.8.0
 
 ### Added

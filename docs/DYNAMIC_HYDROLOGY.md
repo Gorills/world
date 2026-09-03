@@ -1,12 +1,14 @@
 # Dynamic hydrology — v0.4
 
+> Historical v0.4 design note. The current v0.9 architecture adds a global day, multiresolution water ownership, spatial soil capacity and authoritative `WeatherState`. The standalone L1 solver and smooth forcing helper remain supported lower-level/legacy paths; current system boundaries are documented in `docs/ARCHITECTURE.md` and `docs/AUDIT_v0.9.md`.
+
 ## Scope
 
 v0.4 adds a time-dependent water-cycle state on top of the authoritative L0→L1 drainage topology introduced in v0.3.
 
 The dynamic solver operates on one fixed authoritative 8×8 L1 tile (64 regional cells). It does **not** invent drainage directions: every routed volume follows the tile topology produced by `refine_authoritative_hydrology_tile()`.
 
-This is intentionally a compact bucket model. It is designed to establish conserved state and stable contracts before soil types, vegetation feedback, radiation, humidity, channel hydraulics, erosion, or a full weather system exist.
+This is intentionally a compact bucket model. It was designed to establish conserved state and stable contracts before later soil-property, global scheduler and weather layers were added.
 
 ## State per active L1 cell
 
@@ -24,7 +26,7 @@ The state also stores diagnostics from the most recent advance call:
 - baseflow;
 - average routed discharge.
 
-`DynamicHydrologyTileState::simulated_days` records how much time that state instance has advanced.
+`DynamicHydrologyTileState::simulated_days` records how much time that standalone state instance has advanced.
 
 ## Forcing contract
 
@@ -34,9 +36,9 @@ Hydrology consumes external hydrometeorological forcing per L1 cell:
 - mean air temperature;
 - potential evapotranspiration depth over the requested step.
 
-This separation is deliberate. A later weather/atmosphere system can replace the forcing provider without rewriting the hydrology state transition.
+This separation was deliberate and remains the current integration boundary. Since v0.9, authoritative `WeatherState` supplies the same forcing variables at L0 for the global/multiresolution scheduler.
 
-v0.4 includes `make_smooth_climatological_forcing()` only as a deterministic pre-weather provider for tests, CLI runs, and integration work. It is **not** presented as realistic weather.
+v0.4 includes `make_smooth_climatological_forcing()` as a deterministic climate-only provider for tests, CLI runs and controlled integration work. It is not realistic weather.
 
 The helper uses:
 
@@ -97,11 +99,11 @@ known downstream L1 ingress coordinate
 downstream tile external inflow
 ```
 
-v0.4 provides this volume/coordinate contract but does not yet provide a world scheduler that orders and advances all active tiles automatically.
+v0.4 provided this volume/coordinate contract. v0.6 later added the global mixed-resolution scheduler that orchestrates sparse authoritative tiles automatically.
 
 ## Identity and safety
 
-`AuthoritativeHydrologyTile` now carries the `WorldConfig` identity that produced it. Dynamic tile state carries the same identity.
+`AuthoritativeHydrologyTile` carries the `WorldConfig` identity that produced it. Dynamic tile state carries the same identity.
 
 The solver rejects using a tile/state with a different `World`, preventing a valid-looking call from silently using the wrong bounds, sea level, seed, or hierarchy.
 
@@ -122,16 +124,16 @@ The default bucket parameters are model parameters, not measured Europe-wide con
 | initial soil water | 120 mm |
 | initial groundwater | 40 mm |
 
-They exist so the state machine is explicit and testable before a soil/geology layer supplies spatially varying properties.
+Since v0.8, global and refined authoritative water applies derived spatial soil storage/infiltration scale factors to these reference values. The standalone solver follows the same capacity-aware implementation when supplied through current APIs.
 
-## Known limitations
+## v0.4 limitations and current status
 
-- Dynamic state is currently an explicit simulation object/handle, not part of `World` save files yet.
-- There is no global simulation clock or lazy catch-up scheduler yet.
-- The smooth forcing helper is climatology, not stochastic/spatial weather.
-- No frozen-soil effects, canopy interception, capillary rise, aquifer geometry, lateral groundwater flow, wetlands, floodplains, channel storage, or hydraulic water level.
-- One L1 cell uses one generic soil bucket; spatial soil parameters do not exist yet.
-- Rivers carry routed volume/discharge but do not yet have width/depth/velocity or flood-stage hydraulics.
-- Dynamic coupling across multiple tiles must currently be orchestrated by the caller using the explicit outflow/inflow contract.
+Several original v0.4 limitations were intentionally resolved by later milestones: global simulation time, sparse multi-tile ownership, persistence, spatial soil properties and transient weather now exist.
 
-These limitations are intentional boundaries for v0.4. The next architectural step should be a simulation clock/scheduler and stable multi-tile dynamic-state ownership before adding erosion or vegetation feedback.
+Still-current material limitations include:
+
+- no frozen-soil effects, canopy interception, capillary rise, aquifer geometry, lateral groundwater flow, wetlands or floodplains;
+- no persistent channel storage/travel time or hydraulic water level;
+- one vertically aggregated soil bucket;
+- rivers do not yet own width/depth/velocity/flood-stage hydraulic state;
+- authoritative weather remains L0-only, so standalone L1 weather downscaling is not yet defined.

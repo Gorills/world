@@ -1,5 +1,7 @@
 # Continental dynamic water state (v0.5)
 
+> Historical v0.5 design note. The current v0.9 architecture adds authoritative `WeatherState`, multiresolution water ownership and spatial soil capacity on top of this coarse-water foundation. The smooth forcing helper described below remains a legacy deterministic fallback, not the current atmospheric authority.
+
 ## Purpose
 
 v0.4 can simulate detailed water stores on one authoritative 8×8 L1 tile, but a tile created on day 500 previously started from fixed initial bucket values. That violates persistent-world history. v0.5 introduces a cheap authoritative dynamic state at L0 for the complete configured world so every location has a water history before detailed materialization.
@@ -26,7 +28,7 @@ mean air temperature
 potential evapotranspiration depth
 ```
 
-`make_smooth_continental_daily_forcing()` is temporary deterministic scaffolding, not the weather model. A future WeatherSystem can supply the same records.
+`make_smooth_continental_daily_forcing()` is deterministic climate-only scaffolding, not the weather model. Since v0.9, authoritative `WeatherState` supplies the same records through this existing boundary.
 
 Forcing for the entire state is validated before mutation. Invalid size, negative/non-finite precipitation/PET or non-finite temperature rejects the step atomically. Ocean atmospheric forcing is valid; terrestrial hydrology simply excludes ocean cells from stores and water-balance accounting.
 
@@ -85,7 +87,9 @@ The C ABI exposes an opaque `ws_continental_water_state` and functions to:
 
 The opaque handle stores the construction parameters so a C caller cannot accidentally advance the same state with a different parameter set.
 
-## Explicitly deferred
+## Explicitly deferred in v0.5
+
+The following list is historical. Several items were implemented in later milestones.
 
 - persistence of continental dynamic state;
 - L0→L1 conservative disaggregation;
@@ -99,4 +103,4 @@ The opaque handle stores the construction parameters so a C caller cannot accide
 - erosion/sediment;
 - vegetation feedback.
 
-The next layer is conservative L0↔L1 state transfer. Without it, a detailed tile still cannot inherit its parent's accumulated water history correctly.
+The v0.5 next layer was conservative L0↔L1 state transfer. Current status and remaining limitations are documented in `docs/ARCHITECTURE.md` and `docs/AUDIT_v0.9.md`.

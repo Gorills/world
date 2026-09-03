@@ -104,9 +104,9 @@ private:
     const ContinentalHydrologyResult& topology,
     const DynamicHydrologyParameters& parameters = {});
 
-// Temporary deterministic forcing provider until a real weather layer owns atmospheric forcing.
-// It uses climate values cached when the state is created, so advancing Europe does not re-run
-// procedural climate noise for every cell on every day.
+// Legacy deterministic climate-only forcing provider retained for controlled tests and older
+// integrations. v0.9 WeatherState is the authoritative transient atmospheric source and supplies
+// the same ContinentalWaterForcing records through the stable forcing boundary.
 [[nodiscard]] std::vector<ContinentalWaterForcing> make_smooth_continental_daily_forcing(
     const ContinentalWaterState& state);
 
