@@ -130,10 +130,10 @@ std::size_t ContinentalWaterState::index_of(CellCoord coord) const {
     if (coord.x < min_coord_.x || coord.y < min_coord_.y) {
         throw std::out_of_range("continental water coordinate is outside state");
     }
-    const auto dx = coord.x - min_coord_.x;
-    const auto dy = coord.y - min_coord_.y;
-    if (dx >= static_cast<std::int64_t>(width_cells_) ||
-        dy >= static_cast<std::int64_t>(height_cells_)) {
+    const auto dx = static_cast<std::uint64_t>(coord.x) - static_cast<std::uint64_t>(min_coord_.x);
+    const auto dy = static_cast<std::uint64_t>(coord.y) - static_cast<std::uint64_t>(min_coord_.y);
+    if (dx >= static_cast<std::uint64_t>(width_cells_) ||
+        dy >= static_cast<std::uint64_t>(height_cells_)) {
         throw std::out_of_range("continental water coordinate is outside state");
     }
     return static_cast<std::size_t>(dy) * width_cells_ + static_cast<std::size_t>(dx);
