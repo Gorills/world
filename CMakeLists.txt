@@ -10,6 +10,7 @@ add_library(worldsim
     src/dynamic_hydrology.cpp
     src/continental_water.cpp
     src/multiresolution_water.cpp
+    src/multiresolution_water_persistence.cpp
     src/persistence.cpp
     src/c_api.cpp
 )
