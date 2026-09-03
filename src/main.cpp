@@ -208,7 +208,8 @@ int main(int argc, char** argv) {
             if (days <= 0 || days > 100'000) throw std::invalid_argument("days must be in [1, 100000]");
             const auto continent = world.analyze_continental_hydrology();
             auto weather = worldsim::make_weather_state(world);
-            auto water = worldsim::make_continental_water_state(world, continent);
+            worldsim::DynamicHydrologyParameters water_parameters;
+            auto water = worldsim::make_continental_water_state(world, continent, water_parameters);
 
             double precipitation_m3 = 0.0;
             double et_m3 = 0.0;
@@ -218,7 +219,8 @@ int main(int argc, char** argv) {
             double initial_storage_m3 = 0.0;
             double final_storage_m3 = 0.0;
             for (int day = 0; day < days; ++day) {
-                const auto report = worldsim::advance_weather_continental_water_day(weather, water);
+                const auto report = worldsim::advance_weather_continental_water_day(
+                    weather, water, water_parameters);
                 if (day == 0) initial_storage_m3 = report.water.storage_before_m3;
                 final_storage_m3 = report.water.storage_after_m3;
                 precipitation_m3 += report.water.precipitation_m3;
