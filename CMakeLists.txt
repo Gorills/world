@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(worldsim VERSION 0.9.0 LANGUAGES C CXX)
+project(worldsim VERSION 0.10.0 LANGUAGES C CXX)
 
 option(WORLDSIM_BUILD_TESTS "Build WorldSim tests" ON)
 
@@ -14,6 +14,8 @@ add_library(worldsim
     src/multiresolution_water_persistence.cpp
     src/weather.cpp
     src/weather_persistence.cpp
+    src/simulation.cpp
+    src/simulation_persistence.cpp
     src/persistence.cpp
     src/c_api.cpp
     src/soil_c_api.cpp
@@ -83,6 +85,10 @@ if(WORLDSIM_BUILD_TESTS)
     add_executable(worldsim_weather_atomicity_tests tests/test_weather_atomicity.cpp)
     target_link_libraries(worldsim_weather_atomicity_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_weather_atomicity_tests COMMAND worldsim_weather_atomicity_tests)
+
+    add_executable(worldsim_simulation_tests tests/test_simulation.cpp)
+    target_link_libraries(worldsim_simulation_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_simulation_tests COMMAND worldsim_simulation_tests)
 
     add_executable(worldsim_continental_water_tests tests/test_continental_water.cpp)
     target_link_libraries(worldsim_continental_water_tests PRIVATE worldsim::worldsim)
