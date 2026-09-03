@@ -155,6 +155,19 @@ Only selected parents allocate 64 detailed cells. The complete world continues t
 
 `worldsim_multiresolution_water_benchmark` exercises the project's 449,208-cell Europe-scale fixture with 64 simultaneous refined tiles. Benchmark values are observations of a concrete runner/environment and are not performance guarantees.
 
+One GitHub Actions Ubuntu 24.04 / GCC 13.3 Release run on 2026-09-03 observed:
+
+- continental topology: 311.176 ms;
+- multiresolution state creation: 117.125 ms;
+- materialize 64 refined parents: 8.471 ms;
+- one mixed-resolution global day: 55.141 ms;
+- aggregate 64 refined parents: 0.060 ms;
+- peak RSS: 101,204 KiB;
+- water-balance residual: -56,917.668 m³ over a balance scale of roughly 9.66×10¹² m³;
+- relative water-balance error: 5.888×10⁻⁹.
+
+The benchmark enforces only correctness/conservation (`relative error <= 1e-6`), not a timing or RSS threshold.
+
 ## Deferred
 
 - spatial soil properties and varying child capacities;
