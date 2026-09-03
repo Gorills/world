@@ -11,6 +11,7 @@
 #include <limits>
 #include <queue>
 #include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace worldsim {
@@ -24,6 +25,14 @@ constexpr std::int64_t kTileRatio = 8;
 
 bool finite_non_negative(float v) {
     return std::isfinite(v) && v >= 0.0f;
+}
+
+void checked_add_non_negative(double& target, double value, const char* message) {
+    if (!std::isfinite(value) || value < 0.0 ||
+        target > std::numeric_limits<double>::max() - value) {
+        throw std::invalid_argument(message);
+    }
+    target += value;
 }
 
 bool same_bounds(const WorldBounds& a, const WorldBounds& b) {
@@ -296,39 +305,71 @@ HydrologyStepReport advance_dynamic_hydrology_tile(
     if (!std::isfinite(duration_days) || !(duration_days > 0.0) || duration_days > 366.0) {
         throw std::invalid_argument("dynamic hydrology duration must be in (0, 366] days");
     }
+    const double next_simulated_days = state.simulated_days + duration_days;
+    if (!std::isfinite(next_simulated_days) || !(next_simulated_days > state.simulated_days)) {
+        throw std::overflow_error("dynamic hydrology simulated time cannot advance representably");
+    }
     if (forcing.size() != state.cells.size()) {
         throw std::invalid_argument("dynamic hydrology forcing must contain exactly one record per tile cell");
     }
+
+    const auto soil_buckets = make_soil_buckets(world, tile, state, parameters);
+    const auto order = routing_order(tile.hydrology);
+    std::vector<double> inflow_by_cell(state.cells.size(), 0.0);
+    double maximum_routed_volume_m3 = 0.0;
+
+    // Validate the complete step and a conservative routed-volume envelope before mutation.
+    // The depth limit is intentionally far above physical use; it only excludes finite inputs
+    // that can overflow persistent float state or diagnostics.
     for (std::size_t i = 0; i < forcing.size(); ++i) {
         const auto& f = forcing[i];
         if (f.coord != state.cells[i].coord || !finite_non_negative(f.precipitation_mm) ||
             !std::isfinite(f.mean_air_temperature_c) || !finite_non_negative(f.potential_evapotranspiration_mm)) {
             throw std::invalid_argument("dynamic hydrology forcing is invalid or not aligned with tile cells");
         }
+        const auto& s = state.cells[i];
+        const auto& topo = tile.hydrology.cells[i];
+        if (!s.active || topo.ocean) continue;
+
+        const double available_depth = static_cast<double>(s.snow_water_equivalent_mm) +
+            s.surface_water_mm + s.soil_water_mm + s.groundwater_mm + f.precipitation_mm;
+        if (!std::isfinite(available_depth) || available_depth > kMaxWaterDepthMm) {
+            throw std::invalid_argument("dynamic hydrology water depth exceeds numerical safety limit");
+        }
+        const double area = overlap_area_m2(s.coord, world.config().regional_cell_m, world.config().bounds);
+        const double cell_volume = depth_to_volume(available_depth, area);
+        checked_add_non_negative(maximum_routed_volume_m3, cell_volume,
+                                 "dynamic hydrology routed water volume exceeds numerical safety limit");
     }
 
-    std::vector<double> inflow_by_cell(state.cells.size(), 0.0);
     for (const auto& in : external_inflows) {
         if (!std::isfinite(in.volume_m3) || in.volume_m3 < 0.0) {
             throw std::invalid_argument("external hydrology inflow must be finite and non-negative");
         }
         const auto i = state.index_of(in.coord);
         if (!state.cells[i].active) throw std::invalid_argument("external hydrology inflow targets an inactive cell");
-        inflow_by_cell[i] += in.volume_m3;
+        checked_add_non_negative(inflow_by_cell[i], in.volume_m3,
+                                 "external hydrology inflow accumulation exceeds numerical safety limit");
+        checked_add_non_negative(maximum_routed_volume_m3, in.volume_m3,
+                                 "dynamic hydrology routed water volume exceeds numerical safety limit");
     }
 
-    const auto soil_buckets = make_soil_buckets(world, tile, state, parameters);
-    const auto order = routing_order(tile.hydrology);
+    const double total_seconds = duration_days * kSecondsPerDay;
+    if (maximum_routed_volume_m3 / total_seconds >
+        static_cast<double>(std::numeric_limits<float>::max())) {
+        throw std::invalid_argument("dynamic hydrology routed discharge exceeds float diagnostic range");
+    }
+
     const int steps = static_cast<int>(std::ceil(duration_days));
     const double sub_days = duration_days / static_cast<double>(steps);
-    const double sub_seconds = sub_days * kSecondsPerDay;
+    DynamicHydrologyTileState next_state = state;
 
     HydrologyStepReport report;
     report.duration_days = duration_days;
     report.storage_before_m3 = total_storage_m3(world, state);
-    std::vector<double> routed_volume_total(state.cells.size(), 0.0);
+    std::vector<double> routed_volume_total(next_state.cells.size(), 0.0);
 
-    for (auto& c : state.cells) {
+    for (auto& c : next_state.cells) {
         c.last_evapotranspiration_mm = 0.0f;
         c.last_quick_runoff_mm = 0.0f;
         c.last_baseflow_mm = 0.0f;
@@ -336,10 +377,10 @@ HydrologyStepReport advance_dynamic_hydrology_tile(
     }
 
     for (int step = 0; step < steps; ++step) {
-        std::vector<double> routed(state.cells.size(), 0.0);
+        std::vector<double> routed(next_state.cells.size(), 0.0);
 
-        for (std::size_t i = 0; i < state.cells.size(); ++i) {
-            auto& s = state.cells[i];
+        for (std::size_t i = 0; i < next_state.cells.size(); ++i) {
+            auto& s = next_state.cells[i];
             const auto& topo = tile.hydrology.cells[i];
             if (!s.active || topo.ocean) continue;
             const auto& f = forcing[i];
@@ -427,21 +468,37 @@ HydrologyStepReport advance_dynamic_hydrology_tile(
             if (d == kNoIndex) throw std::logic_error("internal route unexpectedly leaves tile");
             routed[d] += volume;
         }
-        (void)sub_seconds;
     }
 
-    const double total_seconds = duration_days * kSecondsPerDay;
-    for (std::size_t i = 0; i < state.cells.size(); ++i) {
-        if (state.cells[i].active) {
-            state.cells[i].last_routed_discharge_m3_s = static_cast<float>(
+    for (std::size_t i = 0; i < next_state.cells.size(); ++i) {
+        if (next_state.cells[i].active) {
+            next_state.cells[i].last_routed_discharge_m3_s = static_cast<float>(
                 routed_volume_total[i] / total_seconds);
         }
     }
 
-    state.simulated_days += duration_days;
-    report.storage_after_m3 = total_storage_m3(world, state);
+    next_state.simulated_days = next_simulated_days;
+    report.storage_after_m3 = total_storage_m3(world, next_state);
     report.water_balance_error_m3 = report.storage_before_m3 + report.precipitation_m3 + report.external_inflow_m3 -
                                     report.evapotranspiration_m3 - report.external_outflow_m3 - report.storage_after_m3;
+
+    if (!std::isfinite(report.storage_before_m3) || !std::isfinite(report.precipitation_m3) ||
+        !std::isfinite(report.external_inflow_m3) || !std::isfinite(report.evapotranspiration_m3) ||
+        !std::isfinite(report.external_outflow_m3) || !std::isfinite(report.storage_after_m3) ||
+        !std::isfinite(report.water_balance_error_m3)) {
+        throw std::overflow_error("dynamic hydrology step produced non-finite diagnostics");
+    }
+    for (const auto& c : next_state.cells) {
+        if (!c.active) continue;
+        if (!finite_non_negative(c.snow_water_equivalent_mm) || !finite_non_negative(c.surface_water_mm) ||
+            !finite_non_negative(c.soil_water_mm) || !finite_non_negative(c.groundwater_mm) ||
+            !finite_non_negative(c.last_evapotranspiration_mm) || !finite_non_negative(c.last_quick_runoff_mm) ||
+            !finite_non_negative(c.last_baseflow_mm) || !finite_non_negative(c.last_routed_discharge_m3_s)) {
+            throw std::overflow_error("dynamic hydrology step produced invalid state or diagnostics");
+        }
+    }
+
+    state = std::move(next_state);
     return report;
 }
 
