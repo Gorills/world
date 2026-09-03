@@ -1,5 +1,54 @@
 # Changelog
 
+## 0.11.0
+
+### Added
+
+- Persistent conserved L0 channel storage inside `MultiresolutionWaterState`; channel water remains part of the existing water authority rather than becoming a fourth simulation/checkpoint component.
+- Fixed one-day e-folding linear-reservoir release (`0.6321205588285577` of start-of-day storage) with the structural rule that newly generated or arriving channel water cannot be re-released during the same global day.
+- One-L0-edge-per-day channel causality across unrefined routing and refined L1 ingress/outlet boundaries.
+- Whole-world conservation accounting including persistent channel storage.
+- Multiresolution-water persistence format v3 with one `double` channel volume per L0 cell and explicit v2 → zero-channel migration.
+- Read-only C++ per-cell/total channel queries.
+- Additive standalone multiresolution-water and unified simulation C ABI channel queries without changing existing C POD layouts or signatures.
+- C/C++ regressions for channel ownership across refinement/aggregation, delayed transport, invalid-step atomicity, exact v3 persistence, v2 migration, C ABI persistence and compound-checkpoint future equivalence.
+- Europe-scale simulation checkpoint gate requiring non-zero channel storage plus exact equality across all 449,208 L0 channel cells after reload and after one deterministic future day.
+- `docs/CHANNEL_TRANSPORT.md` and `docs/AUDIT_v0.11.md`.
+
+### Fixed / hardened
+
+- Fixed a conservation defect found by the existing 60-day weather/multiresolution regression during v0.11 development: processing a downstream cell could overwrite upstream channel volume already accumulated in its scratch next-state. Release now subtracts from the scratch value while remaining based only on immutable start-of-day storage.
+- Ocean L0 cells are rejected if persistent channel storage is non-zero.
+- Channel storage shape, finiteness and non-negativity are validated before daily mutation and on persistence load.
+- Invalid mixed-resolution steps preserve the channel array together with terrestrial coarse/refined state and the global clock.
+- Refined-parent outlet water returns to the parent's next-day L0 channel store instead of crossing another L0 edge during the same day.
+
+### Observed Europe-scale checkpoint performance
+
+One GCC Release CI observation on the 449,208-L0 / 64-refined fixture measured approximately:
+
+- unified simulation construction: `815.272 ms`;
+- five unified days: `776.130 ms`;
+- checkpoint save: `170.951 ms`;
+- checkpoint load including topology reconstruction: `939.440 ms`;
+- checkpoint size: `21,769,048 bytes` (~20.76 MiB);
+- channel storage after five warmup days: `85,772,959,568.875 m³`;
+- peak RSS: `238,800 KiB`;
+- maximum relative water-balance residual: `5.886e-9`.
+
+These are environment-specific observations, not API guarantees.
+
+### Deliberately unchanged
+
+- The L0 drainage topology and terrestrial bucket equations are unchanged.
+- Channel travel time uses one fixed global reservoir coefficient; reach-specific geometry, velocity and residence time are not modeled yet.
+- No channel capacity, flood-wave/backwater hydraulics, wetlands/floodplains or lateral groundwater-channel exchange are introduced.
+- The compound simulation checkpoint still has exactly World, Weather and Multiresolution Water sections; channel storage lives inside the water section.
+- World and Weather persistence formats are unchanged.
+- FNV-1a remains corruption detection rather than authentication.
+- Binary persistence remains native-POD/non-cross-endian.
+- POSIX publication still does not claim full power-loss directory-entry durability because the parent directory is not explicitly fsynced after rename.
+
 ## 0.10.0
 
 ### Added
@@ -112,7 +161,7 @@ These are environment-specific observations, not API guarantees.
 
 - Deterministic derived `SoilProperties` for regional L1 cells with storage-capacity and infiltration-capacity scale factors.
 - O(1) L0 parent-equivalent soil sampling for climate cells.
-- L1 soil heterogeneity normalized by actual in-world overlap area so the area-weighted child mean reproduces the L0 parent scale, including partial boundary parents.
+- L1 soil heterogeneity normalized by actual world-overlap area so its area-weighted child mean reproduces the L0 parent scale, including partial boundary parents.
 - Position- and coordinate-based C++ soil sampling without L1/L2 materialization or persistence.
 - Additive soil C ABI sampling in `soil_c_api.h` with an independent error channel.
 - Dedicated C++ and C regression coverage for determinism, positive finite scales, seed identity, partial-cell parent/child equivalence and non-materializing queries.
