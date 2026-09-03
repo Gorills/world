@@ -116,6 +116,7 @@ int main() {
     const auto clock_path = root.string() + ".clock.bin";
     const auto duplicate_path = root.string() + ".duplicate.bin";
     const auto channel_bad_path = root.string() + ".channel-bad.bin";
+    const auto channel_overflow_path = root.string() + ".channel-overflow.bin";
     const auto legacy_v3_path = root.string() + ".legacy-source-v3.bin";
     const auto legacy_v2_path = root.string() + ".legacy-v2.bin";
 
@@ -225,6 +226,29 @@ int main() {
     }
     check(bad_channel_rejected, "non-finite saved channel storage is rejected");
 
+    std::vector<std::size_t> land_indices;
+    for (std::size_t i = 0; i < topology.cells.size() && land_indices.size() < 2; ++i) {
+        if (!topology.cells[i].ocean) land_indices.push_back(i);
+    }
+    check(land_indices.size() == 2, "persistence fixture contains two terrestrial channel cells");
+    if (land_indices.size() == 2) {
+        auto overflow_channel = bytes;
+        const double huge = std::numeric_limits<double>::max();
+        write_pod_at(
+            overflow_channel, channel_values_offset + land_indices[0] * sizeof(double), huge);
+        write_pod_at(
+            overflow_channel, channel_values_offset + land_indices[1] * sizeof(double), huge);
+        write_bytes(channel_overflow_path, overflow_channel);
+        bool overflow_channel_rejected = false;
+        try {
+            (void)load_multiresolution_water_state(world, topology, channel_overflow_path);
+        } catch (const std::runtime_error&) {
+            overflow_channel_rejected = true;
+        }
+        check(overflow_channel_rejected,
+              "finite per-cell channels whose authoritative total overflows are rejected on load");
+    }
+
     auto wrong_clock = bytes;
     const std::int64_t different_day = state.simulated_day() + 1;
     write_pod_at(wrong_clock, first_tile_day_offset, different_day);
@@ -295,6 +319,7 @@ int main() {
     std::filesystem::remove(clock_path);
     std::filesystem::remove(duplicate_path);
     std::filesystem::remove(channel_bad_path);
+    std::filesystem::remove(channel_overflow_path);
     std::filesystem::remove(legacy_v3_path);
     std::filesystem::remove(legacy_v2_path);
 
