@@ -60,12 +60,12 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Configure static MSVC build
-        run: cmake -S . -B build-static '-DCMAKE_CXX_FLAGS=/WX /EHsc'
+      - name: Configure static MSVC ASan build
+        run: cmake -S . -B build-static '-DCMAKE_CXX_FLAGS=/EHsc /fsanitize=address'
       - name: Build core world test
-        run: cmake --build build-static --config Release --target worldsim_tests
-      - name: Run core world test
-        run: ctest --test-dir build-static -C Release -R '^worldsim_tests$' --output-on-failure
+        run: cmake --build build-static --config RelWithDebInfo --target worldsim_tests
+      - name: Run core world test under MSVC ASan
+        run: ctest --test-dir build-static -C RelWithDebInfo -R '^worldsim_tests$' --output-on-failure
 
   windows-shared:
     runs-on: windows-latest
