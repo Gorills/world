@@ -34,6 +34,10 @@ endif()
 add_executable(worldsim_cli src/main.cpp)
 target_link_libraries(worldsim_cli PRIVATE worldsim::worldsim)
 
+add_executable(worldsim_multiresolution_water_benchmark
+    benchmarks/benchmark_multiresolution_water.cpp)
+target_link_libraries(worldsim_multiresolution_water_benchmark PRIVATE worldsim::worldsim)
+
 if(WORLDSIM_BUILD_TESTS)
     enable_testing()
     add_executable(worldsim_tests tests/test_world.cpp)
