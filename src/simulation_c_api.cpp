@@ -136,6 +136,15 @@ void copy_refined_cell(
     out.last_baseflow_mm = in.last_baseflow_mm;
     out.last_routed_discharge_m3_s = in.last_routed_discharge_m3_s;
 }
+
+void copy_channel_transport(
+    const worldsim::ChannelTransportProperties& in,
+    ws_channel_transport_properties& out) {
+    out.reach_length_m = in.reach_length_m;
+    out.downhill_gradient = in.downhill_gradient;
+    out.residence_days = in.residence_days;
+    out.release_fraction_per_day = in.release_fraction_per_day;
+}
 } // namespace
 
 extern "C" {
@@ -214,6 +223,17 @@ int ws_simulation_total_channel_storage_m3(
     return guarded([&] {
         if (!state || !out_volume_m3) throw std::invalid_argument("state/out_volume_m3 is null");
         *out_volume_m3 = state->impl.water().total_channel_storage_m3();
+    });
+}
+
+int ws_simulation_channel_transport(
+    const ws_simulation_state* state,
+    int64_t climate_x,
+    int64_t climate_y,
+    ws_channel_transport_properties* out_properties) {
+    return guarded([&] {
+        if (!state || !out_properties) throw std::invalid_argument("state/out_properties is null");
+        copy_channel_transport(state->impl.water().channel_transport({climate_x, climate_y}), *out_properties);
     });
 }
 

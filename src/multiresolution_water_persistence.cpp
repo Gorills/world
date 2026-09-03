@@ -18,7 +18,7 @@ namespace worldsim {
 namespace {
 
 constexpr std::array<char, 8> kMagic{'W','S','M','W','0','0','0','1'};
-constexpr std::uint32_t kFormatVersion = 3;
+constexpr std::uint32_t kFormatVersion = 4;
 constexpr double kMaxWaterDepthMm = 1.0e30;
 
 bool same_bounds(const WorldBounds& a, const WorldBounds& b) {
@@ -220,8 +220,9 @@ void save_multiresolution_water_state(
     const std::filesystem::path& path) {
     state.parameters_.validate();
     if (state.simulated_day() < 0) throw std::runtime_error("cannot save a negative multiresolution simulation day");
-    if (state.channel_storage_m3_.size() != state.coarse_.cells_.size()) {
-        throw std::runtime_error("cannot save inconsistent channel storage shape");
+    if (state.channel_storage_m3_.size() != state.coarse_.cells_.size() ||
+        state.channel_transport_.size() != state.coarse_.cells_.size()) {
+        throw std::runtime_error("cannot save inconsistent channel state shape");
     }
     World soil_world(state.config());
 
@@ -254,6 +255,8 @@ void save_multiresolution_water_state(
         write_cell(out, cell);
     }
 
+    // v4 intentionally keeps the v3 storage layout. Reach geometry is derived from the
+    // authoritative topology on create/load rather than serialized as a second authority.
     write_pod(out, coarse_count);
     for (std::size_t i = 0; i < state.channel_storage_m3_.size(); ++i) {
         const double volume = state.channel_storage_m3_[i];
@@ -324,7 +327,7 @@ MultiresolutionWaterState load_multiresolution_water_state(
         throw std::runtime_error(
             "multiresolution water file v1 uses uniform soil-capacity semantics and is not compatible with v2+");
     }
-    if (version != 2u && version != kFormatVersion) {
+    if (version != 2u && version != 3u && version != kFormatVersion) {
         throw std::runtime_error("unsupported multiresolution water file version");
     }
 
@@ -334,6 +337,9 @@ MultiresolutionWaterState load_multiresolution_water_state(
         throw std::runtime_error("multiresolution water file belongs to a different world");
     }
     const auto parameters = read_parameters(in);
+    // v3 persisted the same water state layout as v4 but used a fixed one-day channel reservoir.
+    // No transport metadata existed in the file, so v3 migration preserves every persisted byte
+    // of water state while deriving the v4 reach-aware transport from this authoritative topology.
     auto state = make_multiresolution_water_state(world, topology, parameters);
 
     std::int64_t day{};
