@@ -1,6 +1,7 @@
 #include "worldsim/world.hpp"
 #include "worldsim/continental_water.hpp"
 #include "worldsim/weather.hpp"
+#include "worldsim/simulation.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -13,12 +14,13 @@
 #include <string>
 #include <string_view>
 #include <unordered_set>
+#include <utility>
 
 namespace {
 
 void usage() {
     std::cout <<
-        "WorldSim CLI v0.9\n"
+        "WorldSim CLI v0.10\n"
         "Usage:\n"
         "  worldsim_cli demo [save.ws]\n"
         "  worldsim_cli inspect <save.ws> <x_m> <y_m>\n"
@@ -27,7 +29,9 @@ void usage() {
         "  worldsim_cli tile <save.ws> <climate_x> <climate_y> [river_threshold_m3_s]\n"
         "  worldsim_cli watercycle <save.ws> <climate_x> <climate_y> <days>\n"
         "  worldsim_cli continental-water <save.ws> <days>\n"
-        "  worldsim_cli weather-water <save.ws> <days>\n";
+        "  worldsim_cli weather-water <save.ws> <days>\n"
+        "  worldsim_cli simulation-run <save.ws> <checkpoint.wsc> <days>\n"
+        "  worldsim_cli simulation-resume <checkpoint.wsc> <days>\n";
 }
 
 void print_region(const worldsim::RegionalSample& s) {
@@ -98,6 +102,54 @@ std::uint32_t parse_u32(const char* text) {
     return static_cast<std::uint32_t>(value);
 }
 
+int parse_simulation_days(const char* text) {
+    const auto value = std::stoll(text);
+    if (value < 0 || value > 100'000) {
+        throw std::invalid_argument("days must be in [0, 100000]");
+    }
+    return static_cast<int>(value);
+}
+
+void run_simulation_and_checkpoint(
+    worldsim::SimulationState& simulation,
+    int days,
+    const std::filesystem::path& checkpoint) {
+    const auto start_day = simulation.simulated_day();
+    double precipitation_m3 = 0.0;
+    double et_m3 = 0.0;
+    double outflow_m3 = 0.0;
+    double wet_fraction_sum = 0.0;
+    double max_abs_balance_error_m3 = 0.0;
+
+    for (int i = 0; i < days; ++i) {
+        const auto report = simulation.advance_day();
+        precipitation_m3 += report.water.precipitation_m3;
+        et_m3 += report.water.evapotranspiration_m3;
+        outflow_m3 += report.water.terminal_outflow_m3;
+        wet_fraction_sum += report.weather.wet_area_fraction;
+        max_abs_balance_error_m3 = std::max(
+            max_abs_balance_error_m3, std::abs(report.water.water_balance_error_m3));
+    }
+
+    simulation.save_checkpoint(checkpoint);
+    const double mean_wet_fraction = days == 0
+        ? 0.0
+        : wet_fraction_sum / static_cast<double>(days);
+    std::cout << std::fixed << std::setprecision(6)
+              << "start_day=" << start_day << "\n"
+              << "simulated_day=" << simulation.simulated_day() << "\n"
+              << "advanced_days=" << days << "\n"
+              << "l0_cells=" << simulation.water().coarse_state().cells().size() << "\n"
+              << "refined_tiles=" << simulation.water().refined_tile_count() << "\n"
+              << "materialized_patches=" << simulation.world().materialized_patch_count() << "\n"
+              << "mean_wet_area_fraction=" << mean_wet_fraction << "\n"
+              << "precipitation_m3=" << precipitation_m3 << "\n"
+              << "evapotranspiration_m3=" << et_m3 << "\n"
+              << "terminal_outflow_m3=" << outflow_m3 << "\n"
+              << "max_abs_daily_balance_error_m3=" << max_abs_balance_error_m3 << "\n"
+              << "checkpoint=" << checkpoint.string() << "\n";
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -164,6 +216,21 @@ int main(int argc, char** argv) {
             const auto tile = world.refine_authoritative_hydrology_tile(continent, climate, threshold, 0.25f);
             std::cout << "climate_cell=(" << climate.x << ',' << climate.y << ")\n";
             print_hydrology_summary(tile.hydrology);
+            return 0;
+        }
+
+        if (cmd == "simulation-run" && argc == 5) {
+            auto world = worldsim::World::load(argv[2]);
+            auto simulation = worldsim::SimulationState::from_world(std::move(world));
+            const int days = parse_simulation_days(argv[4]);
+            run_simulation_and_checkpoint(simulation, days, argv[3]);
+            return 0;
+        }
+
+        if (cmd == "simulation-resume" && argc == 4) {
+            auto simulation = worldsim::SimulationState::load_checkpoint(argv[2]);
+            const int days = parse_simulation_days(argv[3]);
+            run_simulation_and_checkpoint(simulation, days, argv[2]);
             return 0;
         }
 
