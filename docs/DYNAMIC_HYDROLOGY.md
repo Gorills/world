@@ -107,6 +107,8 @@ v0.4 provided this volume/coordinate contract. v0.6 later added the global mixed
 
 The solver rejects using a tile/state with a different `World`, preventing a valid-looking call from silently using the wrong bounds, sea level, seed, or hierarchy.
 
+Standalone advance calls also preflight the complete forcing, external-inflow accumulation, representable clock advance, water-depth envelope and routed-discharge diagnostic range before committing state. If validation or a later step fails, the supplied `DynamicHydrologyTileState` is left unchanged. The C ABI exposes the same failure-atomic behavior through `ws_dynamic_hydrology_advance()`.
+
 ## Current defaults
 
 The default bucket parameters are model parameters, not measured Europe-wide constants:
