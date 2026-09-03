@@ -643,7 +643,7 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
         const auto coord = state.coarse_state().coord_of(i);
         const double old_channel = state.channel_storage_m3_[i];
         const double release = old_channel * kChannelReleaseFractionPerDay;
-        channel_next[i] = old_channel - release;
+        channel_next[i] -= release;
         coarse_next[i].last_routed_discharge_m3_s = static_cast<float>(release / kSecondsPerDay);
         if (release == 0.0) continue;
 
