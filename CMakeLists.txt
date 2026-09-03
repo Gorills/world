@@ -28,6 +28,12 @@ set_target_properties(worldsim PROPERTIES POSITION_INDEPENDENT_CODE ON)
 if(BUILD_SHARED_LIBS)
     target_compile_definitions(worldsim PRIVATE WORLDSIM_BUILD_SHARED)
     target_compile_definitions(worldsim INTERFACE WORLDSIM_USE_SHARED)
+    if(WIN32)
+        # Public C++ consumers (CLI/tests and native engine adapters) also link the shared target.
+        # The C ABI has explicit WORLDSIM_API annotations; export the remaining C++ symbols on
+        # Windows so BUILD_SHARED_LIBS has the same usable target contract as Unix platforms.
+        set_target_properties(worldsim PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    endif()
 endif()
 
 if(MSVC)
