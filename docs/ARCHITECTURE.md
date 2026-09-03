@@ -1,11 +1,11 @@
-# Architecture decisions — v0.4
+# Architecture decisions — v0.5
 
 ## 1. Resolution hierarchy
 
 | Level | Resolution | Purpose | Storage |
 |---|---:|---|---|
-| L0 | 8192 m | climate baseline + authoritative continental drainage | procedural/derived whole-world solve |
-| L1 | 1024 m | regional terrain, authoritative refinement + dynamic water state | topology derived; dynamic state explicit |
+| L0 | 8192 m | climate baseline + authoritative continental drainage + coarse dynamic water history | whole-world derived topology + compact dynamic state |
+| L1 | 1024 m | regional terrain, authoritative refinement + detailed dynamic water state | topology derived; detailed state explicit/selective |
 | L2 | 64 m | local persistent environmental history | lazy persistent |
 | Entity | continuous | people/animals/items/buildings later | future |
 
@@ -16,21 +16,22 @@ The hierarchy is deliberately fixed for now. Configurability would complicate pe
 The whole world must have one consistent truth, but does not need uniform stored resolution.
 
 - Static base fields can be reproduced from seed + coordinates.
-- Persistent deviations exist only where history changes them.
+- Time-dependent state that must exist everywhere is stored at a cheap authoritative resolution.
+- Persistent deviations exist at finer levels only where history requires them.
 - Querying coarse fields must not materialize local persistent state.
 - Materialization itself is persistent and therefore observable.
 - External callers do not receive mutable access to persistent C++ structs; mutations go through explicit commands.
 - Derived analyses are not promoted to authoritative truth if their result depends on arbitrary query boundaries.
 
-v0.3 separated the legacy bounded L1 analysis kernel from whole-world L0 drainage and fixed L1 refinement tiles. v0.4 adds mutable dynamic water state only on top of those fixed authoritative tiles.
+v0.3 established whole-world L0 drainage and fixed L1 refinement. v0.4 added detailed mutable L1 water state. The v0.4 audit showed that an L1-only scheduler cannot preserve history at Europe scale, so v0.5 adds authoritative time-dependent water state at L0 for the whole world.
 
-## 3. Coarse samples vs future aggregates
+## 3. Coarse/fine conservation boundary
 
-Current L0/L1 terrain/climate values are coarse samples/proxies. L2 procedural refinement is not yet required to aggregate exactly back to every L1 placeholder field.
+Current L0/L1 terrain/climate values are coarse samples/proxies. L2 procedural refinement is not yet required to aggregate exactly back to every placeholder field.
 
-When dynamic fields such as soil water, biomass, nutrients and population are introduced, parent/child aggregation becomes an explicit invariant: materializing detail must conserve the coarse state, and changing detail must update the coarse state.
+Dynamic conserved fields are different. For water, biomass, nutrients and population, parent/child materialization must preserve the authoritative coarse quantity and later aggregation must return it without creation or loss.
 
-This distinction prevents treating temporary scaffolding (`forest_potential`) as if it were already a conserved ecological quantity.
+v0.5 establishes the parent water history but does not yet implement L0↔L1 conservative state transfer. That is the next required boundary.
 
 ## 4. Coordinates
 
@@ -42,23 +43,38 @@ Configured world bounds are limited by floating-point spatial precision required
 
 Water topology is not represented only as a raster.
 
-Hydrology uses a hierarchy rather than one query rectangle. The L0 whole-world result owns basin/outlet topology; fixed 8×8 L1 tiles refine that topology. Regional hydrology results contain:
+The L0 whole-world result owns basin/outlet topology. Fixed 8×8 L1 tiles refine that topology. Hydrology contains raster state plus graph semantics:
 
-- raster per-cell state: terrain/fill elevation, local water yield, accumulated discharge, downstream coordinate, lake/catchment IDs;
+- per-cell terrain/fill elevation, local yield, accumulated discharge and downstream coordinate;
 - graph-like river edges;
-- explicit lake records with downstream connectivity.
+- explicit lake records with downstream connectivity;
+- stable cross-tile ingress/outlet edges for authoritative L1 refinement.
 
-This preserves the design rule that connected narrow features such as rivers need topology/graph semantics in addition to fields.
+v0.5 dynamic L0 runoff/baseflow is routed only through this immutable authoritative drainage DAG.
 
-## 6. Determinism
+## 6. Global time
 
-Static state and hydrology use deterministic hashing and explicit tie-breaking. Query order does not affect generated results on the tested platforms.
+`ContinentalWaterState` owns one exact signed 64-bit simulation day for the complete coarse world. Individual L0 cells cannot drift in time independently.
+
+Detailed L1 state from v0.4 still carries its own explicit time because global L0↔L1 scheduling has not yet been connected. A future detailed tile scheduler must align L1 activation/deactivation with the authoritative global day, not introduce another independent world clock.
+
+## 7. Forcing boundary
+
+Hydrology does not own weather. It consumes precipitation, mean temperature and potential evapotranspiration.
+
+The bundled smooth forcing provider is deterministic scaffolding. A future WeatherSystem can produce forcing for land and ocean without special-casing the terrestrial hydrology mask; ocean forcing is accepted but excluded from terrestrial water stores/balance.
+
+A continental daily forcing array is fully validated before mutation so a rejected step cannot leave a partially advanced world.
+
+## 8. Determinism
+
+Static state and hydrology use deterministic hashing and explicit tie-breaking. Continental dynamic routing uses a deterministic topological order. Query order does not affect generated results on the tested platforms.
 
 Strict bit-identical cross-platform floating-point determinism remains a future contract decision.
 
-## 7. Persistence
+## 9. Persistence
 
-Save format v2 stores:
+Save format v2 currently stores:
 
 - magic/version;
 - world configuration including sea level;
@@ -66,24 +82,18 @@ Save format v2 stores:
 
 The loader remains compatible with v1 files, which imply sea level 0 m.
 
-Procedural terrain/climate and hydrology results are reconstructed/derived and are not stored.
+Procedural terrain/climate, hydrology topology and v0.5 continental dynamic water state are not yet stored. Save-format integration should be designed together with L0↔L1 ownership so a save cannot contain contradictory coarse and detailed state.
 
-Serialization order is canonical. The loader rejects malformed counts, duplicate/out-of-bounds patches, invalid normalized values and trailing bytes.
+Serialization order of the existing saved state is canonical. The loader rejects malformed counts, duplicate/out-of-bounds patches, invalid normalized values and trailing bytes.
 
-The format remains native-endian and is not yet promised as the permanent public save format.
-
-## 8. Engine boundary
+## 10. Engine boundary
 
 The C ABI uses opaque handles plus POD copy functions so engine bindings do not depend on the C++ ABI or STL containers.
 
-Game engines render/query the simulation and submit commands; they do not own authoritative state.
+Game engines render/query the simulation and submit commands; they do not own authoritative state. The C ABI continental-water handle also retains the parameter set used to create the state, preventing engine callers from accidentally changing those parameters between days.
 
-## 9. Dynamic state boundary
+## 11. Current strongest limitation
 
-v0.4 intentionally keeps forcing separate from hydrology. Hydrology consumes precipitation, temperature and PET records; the bundled smooth climatological provider is scaffolding and can later be replaced by a weather system without changing the storage/routing contract.
+The world now has coarse hydrological history and one global coarse day, but detailed L1 tiles are not yet materialized from / aggregated back into that parent history. Until conservative L0↔L1 transfer exists, detailed tiles remain explicit standalone simulations rather than true refinements of the evolving world state.
 
-Dynamic tile state is not yet stored inside `World`. This avoids inventing a global-time ownership model prematurely. The next foundation is a simulation clock and scheduler that can own, lazily advance, persist and cross-couple many tile states deterministically.
-
-## 10. Current strongest limitation
-
-Topology and water accounting are stable, but there is no global multi-tile time scheduler/persistence yet, and hydraulic surface elevation is not solved continuously across independently refined L1 tiles. Coastline is also binary at L0 resolution and endorheic basins are not a dedicated physical class yet.
+Hydraulic travel time, flood stage, continuous water-surface elevation across L1 tiles, endorheic-basin specialization, lateral groundwater, wetlands, erosion and vegetation feedback are also deferred.

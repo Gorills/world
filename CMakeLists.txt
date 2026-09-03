@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(worldsim VERSION 0.4.0 LANGUAGES C CXX)
+project(worldsim VERSION 0.5.0 LANGUAGES C CXX)
 
 option(WORLDSIM_BUILD_TESTS "Build WorldSim tests" ON)
 
@@ -8,6 +8,7 @@ add_library(worldsim
     src/hydrology.cpp
     src/continental_hydrology.cpp
     src/dynamic_hydrology.cpp
+    src/continental_water.cpp
     src/persistence.cpp
     src/c_api.cpp
 )
@@ -35,6 +36,10 @@ if(WORLDSIM_BUILD_TESTS)
     add_executable(worldsim_tests tests/test_world.cpp)
     target_link_libraries(worldsim_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_tests COMMAND worldsim_tests)
+
+    add_executable(worldsim_continental_water_tests tests/test_continental_water.cpp)
+    target_link_libraries(worldsim_continental_water_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_continental_water_tests COMMAND worldsim_continental_water_tests)
 
     add_executable(worldsim_c_api_tests tests/test_c_api.c)
     target_link_libraries(worldsim_c_api_tests PRIVATE worldsim::worldsim)

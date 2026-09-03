@@ -1,14 +1,14 @@
-# WorldSim v0.4.0 — dynamic water cycle
+# WorldSim v0.5.0 — continental dynamic water state
 
-Headless C++20 simulation core for a large persistent world. v0.4 audits the v0.3 authoritative drainage boundary and adds the first time-dependent natural state: conserved snow, surface water, soil water, groundwater, evapotranspiration, runoff and baseflow on authoritative L1 tiles.
+Headless C++20 simulation core for a large persistent world. v0.5 adds the first world-scale time-dependent state: one exact global day and conserved coarse water stores for every authoritative L0 cell. This fixes the v0.4 architectural gap where a lazily materialized L1 tile had no hydrological history before materialization.
 
 ## Implemented
 
 - Engine-independent C++20 core (`worldsim`).
 - C ABI suitable for thin Unity/Godot/Unreal adapters.
 - Spatial hierarchy:
-  - L0 climate / continental drainage: 8192 m;
-  - L1 regional terrain / refined drainage / dynamic water state: 1024 m;
+  - L0 climate / continental drainage / coarse dynamic water: 8192 m;
+  - L1 regional terrain / refined drainage / detailed dynamic water: 1024 m;
   - L2 local persistent history: 64 m, 16×16 per L1 cell;
   - future entities use continuous coordinates.
 - Europe-scale world bounds without eager L1/L2 allocation.
@@ -16,68 +16,76 @@ Headless C++20 simulation core for a large persistent world. v0.4 audits the v0.
 - Configurable sea-level datum.
 - Whole-world authoritative L0 drainage and stable basin/outlet topology.
 - Fixed 8×8 authoritative L1 refinement with stable cross-tile outlet/ingress edges.
-- Dynamic hydrology state per active L1 cell:
+- v0.4 detailed L1 dynamic hydrology remains available for explicitly orchestrated tiles.
+- v0.5 authoritative continental water state for every L0 cell:
+  - one exact integer simulation day;
   - snow water equivalent;
-  - surface water;
+  - surface-water store;
   - soil-water bucket;
-  - groundwater storage;
+  - groundwater store;
   - evapotranspiration;
   - infiltration/percolation;
   - quick runoff;
-  - groundwater baseflow;
-  - routed discharge through the authoritative drainage graph.
-- Explicit upstream channel-volume injection for cross-tile coupling.
-- Per-step water-balance report.
-- Internal substeps of at most one day for longer advances.
-- Deterministic smooth climatological forcing helper until a real weather layer exists.
-- World identity embedded in authoritative tiles/state to prevent cross-world misuse.
-- C ABI dynamic-hydrology handle, forcing, stepping and state-copy functions.
-- CLI `watercycle` multi-day headless runner.
+  - baseflow;
+  - same-day routing through the immutable continental drainage DAG;
+  - whole-continent water-balance report.
+- Deterministic smooth daily forcing helper until a weather system exists.
+- Atmospheric forcing over ocean cells is accepted but excluded from terrestrial stores/balance.
+- Full forcing pre-validation: rejected daily steps are atomic.
+- C ABI handle, forcing, stepping and state-copy functions for continental water.
+- CLI `continental-water` world-scale headless runner.
 - Lazy persistent L2 materialization and `disturb_surface()`.
 - Binary world save format remains v2 with v1 read compatibility.
-- C++ tests and pure-C ABI tests.
+- PR CI: GCC/Clang warnings-as-errors plus ASan/UBSan.
 
-## Core invariant
+## Multiresolution truth
 
-Dynamic hydrology does not choose its own drainage topology.
-
-```text
-whole-world L0 drainage
-        ↓
-authoritative 8×8 L1 topology
-        ↓
-weather/climate forcing
-        ↓
-snow ↔ surface → soil → groundwater
-        ↓          ↓          ↓
-      runoff     ET       baseflow
-        └──────────┬───────────┘
-                   ↓
-       authoritative channel routing
-```
-
-For every advance:
+v0.5 deliberately does **not** make every 1 km L1 cell active for the whole world.
 
 ```text
-storage_before + precipitation + upstream_inflow
-≈ storage_after + evapotranspiration + downstream_outflow
+one global simulation day
+        ↓
+all authoritative L0 cells (~8 km)
+        ↓
+coarse snow / surface / soil / groundwater history
+        ↓
+continental drainage DAG
+        ↓
+terminal ocean/world-boundary outflow
+
+selected places later
+        ↓
+conservative L0 → L1 refinement
+        ↓
+detailed local hydrology
 ```
 
-The residual is reported as `water_balance_error_m3` and tested.
+For the project Europe-scale fixture, storing current `DynamicHydrologyCellState` for every L1 cell would be about 1.50 GiB before other systems. The coarse L0 state avoids that while preserving world history.
+
+## Water-balance invariant
+
+For every continental day:
+
+```text
+storage_before + terrestrial_precipitation
+≈ storage_after + terrestrial_ET + terminal_outflow
+```
+
+The residual is reported as `water_balance_error_m3`. Runoff/baseflow are routed only through the precomputed authoritative L0 drainage DAG.
 
 ## Scientific/model limitations
 
-v0.4 establishes conserved dynamic state; it is not yet a complete catchment model.
+v0.5 establishes world-scale temporal ownership, not a complete physical catchment model.
 
 - Terrain/climate are synthetic scaffolding, not reconstructed Europe.
-- The included smooth climatological forcing is **not weather**. It exists so the hydrology layer can run before an atmosphere/weather system is built.
-- Soil properties are currently generic bucket parameters, not spatially generated soil types.
-- No lateral groundwater aquifer model, wetlands, floodplains, channel width/depth/velocity, erosion, sediment or vegetation feedback yet.
-- L1 cross-tile topology is stable, but exact hydraulic water-surface continuity is not yet solved.
-- Dynamic hydrology state is currently an explicit simulation state object/handle and is **not stored in `World::save()` yet**.
-- There is no global simulation clock/scheduler yet; callers currently orchestrate multi-tile stepping and transfer upstream tile outflow into downstream ingress cells.
+- Smooth forcing is **not weather**; a later WeatherSystem will replace it.
+- Soil properties are generic global bucket parameters, not spatial soil types.
+- L0 routing currently moves daily quickflow/baseflow through the DAG within the same daily step; channel travel time and flood-wave hydraulics are not modeled yet.
+- No lateral groundwater aquifers, wetlands, floodplains, channel geometry, erosion, sediment or vegetation feedback yet.
+- Detailed L1 state is not yet conservatively materialized from / aggregated back into the L0 parent state.
+- Continental dynamic state is not yet persisted in `World::save()`; save format remains unchanged in v0.5.
 
-See `docs/DYNAMIC_HYDROLOGY.md`, `docs/CONTINENTAL_HYDROLOGY.md` and `docs/AUDIT_v0.3.md`.
+See `docs/CONTINENTAL_WATER.md`, `docs/AUDIT_v0.4.md`, `docs/DYNAMIC_HYDROLOGY.md` and `docs/CONTINENTAL_HYDROLOGY.md`.
 
 ## Build
 
@@ -108,32 +116,31 @@ Authoritative whole-world drainage:
 ./build/worldsim_cli continent demo.ws 25
 ```
 
-Refine an L0 cell:
+Run the v0.5 world-scale coarse water history:
 
 ```bash
-./build/worldsim_cli tile demo.ws 3 4 0.5
+./build/worldsim_cli continental-water demo.ws 365
 ```
 
-Run 365 days of the v0.4 water-cycle state with the temporary smooth climatological forcing provider:
+Run detailed v0.4 L1 water state for one authoritative tile:
 
 ```bash
 ./build/worldsim_cli watercycle demo.ws 3 4 365
 ```
-
-The command reports cumulative precipitation, ET, outflow, initial/final storage, final mean water stores and maximum absolute daily balance error.
 
 ## Audits
 
 - `docs/AUDIT_v0.1.md` — spatial/persistence foundation before v0.2.
 - `docs/AUDIT_v0.2.md` — regional hydrology before v0.3.
 - `docs/AUDIT_v0.3.md` — authoritative drainage boundary before v0.4.
+- `docs/AUDIT_v0.4.md` — rejects an L1-only scheduler and establishes the v0.5 L0 state boundary.
 
 ## Next bounded milestone
 
-Do **not** add erosion yet. The missing foundation is ownership and time orchestration of dynamic state:
+Do not add vegetation or erosion yet. The next required boundary is **conservative L0↔L1 state refinement**:
 
-1. global simulation clock;
-2. active/lazy tile scheduler;
-3. deterministic upstream→downstream multi-tile stepping;
-4. persistence/catch-up of dynamic tile state;
-5. then spatial soil properties and vegetation feedback can consume soil moisture and groundwater.
+1. materialize an authoritative L1 tile from its parent L0 water stores without creating/destroying water;
+2. advance detailed L1 state while preserving one global day;
+3. aggregate L1 back into L0 when detail is released;
+4. define persistence for the authoritative coarse state and detailed overrides;
+5. only then allow soil/vegetation systems to depend on long-lived local moisture history.
