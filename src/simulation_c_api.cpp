@@ -204,7 +204,7 @@ int ws_simulation_sample_region(
     ws_regional_sample* out_sample) {
     return guarded([&] {
         if (!state || !out_sample) throw std::invalid_argument("state/out_sample is null");
-        const auto sample = state->impl.world().sample_region({x_m, y_m});
+        const auto sample = state->impl.world().sample_region(worldsim::WorldPosition{x_m, y_m});
         out_sample->cell_x = sample.coord.x;
         out_sample->cell_y = sample.coord.y;
         out_sample->elevation_m = sample.elevation_m;
