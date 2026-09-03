@@ -101,6 +101,11 @@ void HydrologyRequest::validate() const {
 }
 
 std::size_t HydrologyResult::index_of(CellCoord coord) const {
+    request.validate();
+    std::size_t expected_count{};
+    if (!checked_cell_count(request, expected_count) || cells.size() != expected_count) {
+        throw std::invalid_argument("hydrology result dimensions do not match cell storage");
+    }
     const auto i = index_for_coord(coord, request);
     if (i == kNoIndex) throw std::out_of_range("hydrology coordinate is outside result");
     return i;
