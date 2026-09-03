@@ -171,7 +171,7 @@
     std::vector<char> duplicate_bytes;
     {
         std::ifstream duplicate_in(duplicate_save, std::ios::binary);
-        duplicate_bytes.assign(std::istreambuf_iterator<char>(duplicate_in), {});
+        duplicate_bytes = std::vector<char>((std::istreambuf_iterator<char>(duplicate_in)), {});
     }
     constexpr std::size_t count_offset = 8 + sizeof(std::uint32_t) + sizeof(Seed) +
         sizeof(double) * 4 + sizeof(std::int32_t) * 3 + sizeof(float);
