@@ -251,7 +251,7 @@ void extract_section(
 void sync_file(const std::filesystem::path& path) {
 #ifdef _WIN32
     const HANDLE handle = CreateFileW(
-        path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
+        path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle == INVALID_HANDLE_VALUE) {
         throw std::runtime_error("cannot open completed checkpoint for flush");
