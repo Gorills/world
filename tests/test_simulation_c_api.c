@@ -143,6 +143,10 @@ int main(void) {
               "simulation C ABI water report remains finite");
     }
 
+    check(ws_simulation_copy_refined_water_cells(
+              simulation, 0, 0, refined, WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT) == 0,
+          "simulation C ABI snapshots current refined state before checkpoint");
+
     ws_weather_cell_sample weather_before;
     memset(&weather_before, 0, sizeof(weather_before));
     check(ws_simulation_sample_weather(simulation, 0, 0, &weather_before) == 0,
