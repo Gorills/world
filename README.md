@@ -232,10 +232,10 @@ Legacy focused solver paths remain available:
 ## Documentation
 
 - `docs/ARCHITECTURE.md` — current ownership and scheduling decisions.
-- `docs/SIMULATION.md` — unified lifecycle/checkpoint/C ABI/CLI contract introduced in v0.10.
+- `docs/SIMULATION.md` — unified lifecycle/checkpoint/C ABI/CLI contract introduced in v0.10 and extended by v0.11 water persistence.
 - `docs/CHANNEL_TRANSPORT.md` — v0.11 persistent channel ownership, routing and persistence contract.
 - `docs/WEATHER.md` — transient weather model.
-- `docs/MULTIRESOLUTION_WATER.md` — historical v0.8 conservative coarse/fine terrestrial ownership design.
+- `docs/MULTIRESOLUTION_WATER.md` — historical v0.8 conservative coarse/fine terrestrial ownership design with current-status pointers.
 - `docs/SOIL.md` — static spatial soil properties and capacity integration.
 
 ## Audits
