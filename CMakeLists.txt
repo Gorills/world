@@ -52,6 +52,10 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_continental_water_index_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_continental_water_index_tests COMMAND worldsim_continental_water_index_tests)
 
+    add_executable(worldsim_dynamic_hydrology_index_tests tests/test_dynamic_hydrology_index.cpp)
+    target_link_libraries(worldsim_dynamic_hydrology_index_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_dynamic_hydrology_index_tests COMMAND worldsim_dynamic_hydrology_index_tests)
+
     add_executable(worldsim_multiresolution_water_tests tests/test_multiresolution_water.cpp)
     target_link_libraries(worldsim_multiresolution_water_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_multiresolution_water_tests COMMAND worldsim_multiresolution_water_tests)

@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <limits>
 #include <queue>
 #include <stdexcept>
@@ -17,6 +18,7 @@ namespace {
 constexpr double kPi = 3.14159265358979323846;
 constexpr double kSecondsPerDay = 86'400.0;
 constexpr std::size_t kNoIndex = std::numeric_limits<std::size_t>::max();
+constexpr std::int64_t kTileRatio = 8;
 
 bool finite_non_negative(float v) {
     return std::isfinite(v) && v >= 0.0f;
@@ -47,6 +49,16 @@ double depth_to_volume(double depth_mm, double area_m2) {
     return depth_mm * 0.001 * area_m2;
 }
 
+CellCoord tile_min_coord(CellCoord climate_coord) {
+    if (climate_coord.x > std::numeric_limits<std::int64_t>::max() / kTileRatio ||
+        climate_coord.x < std::numeric_limits<std::int64_t>::min() / kTileRatio ||
+        climate_coord.y > std::numeric_limits<std::int64_t>::max() / kTileRatio ||
+        climate_coord.y < std::numeric_limits<std::int64_t>::min() / kTileRatio) {
+        throw std::out_of_range("dynamic hydrology tile coordinate is not representable");
+    }
+    return {climate_coord.x * kTileRatio, climate_coord.y * kTileRatio};
+}
+
 void validate_tile(const World& world, const AuthoritativeHydrologyTile& tile) {
     if (!same_config_identity(world.config(), tile.config)) {
         throw std::invalid_argument("authoritative hydrology tile belongs to a different world configuration");
@@ -55,16 +67,16 @@ void validate_tile(const World& world, const AuthoritativeHydrologyTile& tile) {
     if (h.request.width_cells != 8 || h.request.height_cells != 8 || h.cells.size() != 64) {
         throw std::invalid_argument("dynamic hydrology requires an authoritative 8x8 L1 tile");
     }
-    if (h.request.min_coord != CellCoord{tile.climate_coord.x * 8, tile.climate_coord.y * 8}) {
+    if (h.request.min_coord != tile_min_coord(tile.climate_coord)) {
         throw std::invalid_argument("authoritative tile coordinate invariant is broken");
     }
 }
 
 std::size_t local_index(const HydrologyResult& h, CellCoord c) {
-    const auto dx = c.x - h.request.min_coord.x;
-    const auto dy = c.y - h.request.min_coord.y;
-    if (dx < 0 || dy < 0 || dx >= static_cast<std::int64_t>(h.request.width_cells) ||
-        dy >= static_cast<std::int64_t>(h.request.height_cells)) return kNoIndex;
+    if (c.x < h.request.min_coord.x || c.y < h.request.min_coord.y) return kNoIndex;
+    const auto dx = static_cast<std::uint64_t>(c.x) - static_cast<std::uint64_t>(h.request.min_coord.x);
+    const auto dy = static_cast<std::uint64_t>(c.y) - static_cast<std::uint64_t>(h.request.min_coord.y);
+    if (dx >= h.request.width_cells || dy >= h.request.height_cells) return kNoIndex;
     return static_cast<std::size_t>(dy) * h.request.width_cells + static_cast<std::size_t>(dx);
 }
 
@@ -159,10 +171,13 @@ void DynamicHydrologyParameters::validate() const {
 }
 
 std::size_t DynamicHydrologyTileState::index_of(CellCoord coord) const {
-    const CellCoord min{climate_coord.x * 8, climate_coord.y * 8};
-    const auto dx = coord.x - min.x;
-    const auto dy = coord.y - min.y;
-    if (dx < 0 || dy < 0 || dx >= 8 || dy >= 8) {
+    const CellCoord min = tile_min_coord(climate_coord);
+    if (coord.x < min.x || coord.y < min.y) {
+        throw std::out_of_range("dynamic hydrology coordinate is outside tile");
+    }
+    const auto dx = static_cast<std::uint64_t>(coord.x) - static_cast<std::uint64_t>(min.x);
+    const auto dy = static_cast<std::uint64_t>(coord.y) - static_cast<std::uint64_t>(min.y);
+    if (dx >= static_cast<std::uint64_t>(kTileRatio) || dy >= static_cast<std::uint64_t>(kTileRatio)) {
         throw std::out_of_range("dynamic hydrology coordinate is outside tile");
     }
     return static_cast<std::size_t>(dy) * 8U + static_cast<std::size_t>(dx);
