@@ -1,18 +1,18 @@
-# WorldSim v0.6.0 — conservative multiresolution water ownership
+# WorldSim v0.7.0 — deterministic spatial soil properties
 
-Headless C++20 simulation core for a large persistent world. v0.6 connects the authoritative world-scale L0 water history to sparse detailed L1 tiles without creating two independent truths for the same region.
+Headless C++20 simulation core for a large persistent world. v0.7 adds a deterministic spatial soil-property field with an explicit L0↔L1 aggregation contract while preserving the v0.6 conservative dynamic-water ownership model.
 
 ## Implemented
 
 - Engine-independent C++20 core (`worldsim`).
 - C ABI suitable for thin Unity/Godot/Unreal adapters.
 - Spatial hierarchy:
-  - L0 climate / continental drainage / coarse dynamic water: 8192 m;
-  - L1 regional terrain / authoritative refined drainage / selective detailed dynamic water: 1024 m;
+  - L0 climate / continental drainage / coarse dynamic water / parent-equivalent soil: 8192 m;
+  - L1 regional terrain / authoritative refined drainage / selective detailed dynamic water / spatial soil heterogeneity: 1024 m;
   - L2 local persistent history: 64 m, 16×16 per L1 cell;
   - future entities use continuous coordinates.
 - Europe-scale world bounds without eager L1/L2 allocation.
-- Deterministic procedural terrain and climate scaffolding.
+- Deterministic procedural terrain, climate and soil scaffolding.
 - Configurable sea-level datum.
 - Whole-world authoritative L0 drainage and stable basin/outlet topology.
 - Fixed 8×8 authoritative L1 refinement with stable cross-tile outlet/ingress edges.
@@ -34,15 +34,34 @@ Headless C++20 simulation core for a large persistent world. v0.6 connects the a
   - refined outlet → coarse downstream;
   - refined-to-refined transfer through deterministic boundary cells;
   - no independent coarse step for a refined parent.
-- Atomic rejected mixed-resolution steps.
+- Deterministic spatial soil properties:
+  - parent-equivalent L0 storage/infiltration scale factors;
+  - heterogeneous L1 scale factors;
+  - actual-area normalization so the L1 weighted mean reproduces the L0 parent property, including partial boundary parents;
+  - queries remain derived and do not materialize or persist L1/L2 state.
+- Atomic rejected mixed-resolution water steps.
 - Separate versioned persistence for dynamic multiresolution water ownership; existing `World::save()` remains v2 with v1 read compatibility.
-- C ABI for multiresolution ownership, stepping, state copy and persistence.
+- Additive C ABI surfaces for multiresolution water and soil sampling.
 - Deterministic smooth forcing helpers until a weather system exists.
 - Lazy persistent L2 materialization and `disturb_surface()`.
 - PR CI: GCC/Clang warnings-as-errors plus ASan/UBSan.
 - Europe-scale mixed-resolution benchmark executable.
 
-## Ownership invariant
+## Soil parent/child invariant
+
+`SoilProperties` contains dimensionless modifiers for future storage-capacity and infiltration-capacity use. For every climate parent, the directly sampled L0 value is the area-weighted mean of its in-world 8×8 L1 child values:
+
+```text
+parent_scale = Σ(child_scale × child_overlap_area)
+               --------------------------------------
+                    Σ(child_overlap_area)
+```
+
+This remains true for partial parents at configured world boundaries. The values are reproducible from seed + coordinates and are not persisted.
+
+The current soil field is synthetic scaffolding, not measured soil classes or reconstructed pedology. v0.7 establishes the property contract only; water buckets do not consume these scales yet.
+
+## Water ownership invariant
 
 The same water volume is never independently owned by both L0 and L1.
 
@@ -56,7 +75,7 @@ refined parent
     L1 tile   = authoritative
 ```
 
-This gives the world one state with variable resolution rather than separate coarse and detailed simulations that can drift.
+This gives the world one dynamic-water state with variable resolution rather than separate coarse and detailed simulations that can drift.
 
 ## Mixed-resolution routing
 
@@ -76,7 +95,7 @@ The continental topological order determines when each parent is processed. Upst
 
 ## Conservation
 
-For materialization and aggregation, each conserved store is transferred by volume using actual in-world cell overlap areas. This includes partial L0/L1 cells along configured world bounds.
+For water materialization and aggregation, each conserved store is transferred by volume using actual in-world cell overlap areas. This includes partial L0/L1 cells along configured world bounds.
 
 For each global mixed-resolution day:
 
@@ -91,21 +110,24 @@ The balance includes coarse-owned L0 stores plus refined-owned L1 stores, never 
 
 `World::save()` continues to store world configuration and persistent L2 patches using the existing v1/v2 format.
 
+Soil properties are derived static world truth and therefore are not serialized.
+
 Dynamic water remains an explicit simulation state. `save_multiresolution_water_state()` / `load_multiresolution_water_state()` use a separate versioned file containing the exact global day, coarse water state and sparse refined ownership. Derived hydrology topology is reconstructed from the world and authoritative continental topology on load.
 
 Corrupt/truncated files, wrong-world identity, duplicate refined parents, clock mismatches, topology mismatches and trailing data are rejected.
 
 ## Scientific/model limitations
 
-v0.6 establishes state ownership and conservative transfer, not a complete physical catchment model.
+v0.7 establishes spatial soil-property identity and parent/child aggregation, not a complete physical catchment or soil model.
 
-- Terrain/climate are synthetic scaffolding, not reconstructed Europe.
+- Terrain/climate/soil fields are synthetic scaffolding, not reconstructed Europe.
 - Smooth forcing is **not weather**; a later WeatherSystem can replace it at the forcing boundary.
-- Soil properties are still generic global bucket parameters, not spatial soil types. Uniform child depth during refinement is therefore deliberate; it does not claim spatial soil realism.
+- Soil scales are dimensionless modifiers and do not yet alter water bucket capacities or infiltration.
+- v0.6 water refinement therefore still uses the existing global reference bucket parameters and uniform child depth.
 - L0 routing moves daily quickflow/baseflow through the DAG within one daily step; channel travel time and flood-wave hydraulics are not modeled.
 - No lateral groundwater aquifers, wetlands, floodplains, channel geometry, erosion, sediment or vegetation feedback yet.
 
-See `docs/MULTIRESOLUTION_WATER.md`, `docs/CONTINENTAL_WATER.md`, `docs/AUDIT_v0.5.md`, `docs/AUDIT_v0.4.md`, `docs/DYNAMIC_HYDROLOGY.md` and `docs/CONTINENTAL_HYDROLOGY.md`.
+See `docs/SOIL.md`, `docs/MULTIRESOLUTION_WATER.md`, `docs/CONTINENTAL_WATER.md`, `docs/AUDIT_v0.6.md`, `docs/AUDIT_v0.5.md`, `docs/DYNAMIC_HYDROLOGY.md` and `docs/CONTINENTAL_HYDROLOGY.md`.
 
 ## Build
 
@@ -156,7 +178,7 @@ Run the older standalone detailed L1 solver for one authoritative tile:
 ./build/worldsim_cli watercycle demo.ws 3 4 365
 ```
 
-The v0.6 coupled ownership layer is currently exposed through the C++ API and its dedicated C ABI rather than a new CLI command.
+The multiresolution ownership and soil-property layers are currently exposed through C++ APIs and dedicated C ABI extensions rather than new CLI commands.
 
 ## Audits
 
@@ -165,7 +187,8 @@ The v0.6 coupled ownership layer is currently exposed through the C++ API and it
 - `docs/AUDIT_v0.3.md` — authoritative drainage boundary before v0.4.
 - `docs/AUDIT_v0.4.md` — rejects an L1-only scheduler and establishes the v0.5 L0 state boundary.
 - `docs/AUDIT_v0.5.md` — validates the coarse boundary, records numeric/index hardening, and selects the v0.6 ownership model.
+- `docs/AUDIT_v0.6.md` — validates the ownership boundary, hardens the remaining standalone L1 index path, and selects the v0.7 spatial-property contract.
 
 ## Next bounded milestone
 
-Do not add vegetation or erosion merely because multiresolution ownership now exists. The next natural dependency is spatial environmental state that genuinely needs finer heterogeneity — especially soil properties/capacity — while preserving the same parent/child conservation contract.
+Apply the v0.7 soil scales to dynamic hydrology without breaking v0.6 ownership/conservation: define parent-equivalent L0 capacities, per-child L1 capacities, and a conservative soil-water materialization/aggregation rule when child capacities differ. Do not add vegetation or erosion in that pass.

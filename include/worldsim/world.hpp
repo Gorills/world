@@ -22,6 +22,13 @@ public:
     [[nodiscard]] ClimateSample sample_climate(CellCoord coord) const;
     [[nodiscard]] RegionalSample sample_region(CellCoord coord) const;
     [[nodiscard]] RegionalSample sample_region(WorldPosition position) const;
+
+    // Derived static soil truth. Regional samples contain fine heterogeneity; the climate
+    // sample is the exact area-weighted parent equivalent used by future coarse/fine transfer.
+    [[nodiscard]] SoilProperties sample_soil(CellCoord regional_coord) const;
+    [[nodiscard]] SoilProperties sample_soil(WorldPosition position) const;
+    [[nodiscard]] SoilProperties sample_climate_soil(CellCoord climate_coord) const;
+
     [[nodiscard]] HydrologyResult analyze_hydrology(const HydrologyRequest& request) const;
     [[nodiscard]] ContinentalHydrologyResult analyze_continental_hydrology(
         const ContinentalHydrologyRequest& request = {}) const;

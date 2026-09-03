@@ -68,6 +68,14 @@ struct RegionalSample {
     float forest_potential{};    // 0..1, placeholder for later vegetation system
 };
 
+// Deterministic static soil modifiers. They scale the existing hydrology parameter values
+// rather than replacing those configurable reference parameters. A value of 1 means the
+// reference capacity/rate is unchanged.
+struct SoilProperties {
+    float storage_capacity_scale{1.0f};
+    float infiltration_capacity_scale{1.0f};
+};
+
 struct LocalCell {
     float elevation_m{};
     float terrain_roughness{};

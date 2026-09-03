@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.7.0
+
+### Added
+
+- Deterministic derived `SoilProperties` for regional L1 cells with storage-capacity and infiltration-capacity scale factors.
+- O(1) L0 parent-equivalent soil sampling for climate cells.
+- L1 soil heterogeneity normalized by actual in-world overlap area so the area-weighted child mean reproduces the L0 parent scale, including partial boundary parents.
+- Position- and coordinate-based C++ soil sampling without L1/L2 materialization or persistence.
+- Additive soil C ABI sampling in `soil_c_api.h` with an independent error channel.
+- Dedicated C++ and C regression coverage for determinism, positive finite scales, seed identity, partial-cell parent/child equivalence and non-materializing queries.
+- `docs/SOIL.md` describing the v0.7 property contract.
+
+### Fixed / hardened
+
+- Standalone detailed L1 hydrology now rejects unrepresentable parent coordinates and extreme out-of-range cell/downstream coordinates without signed integer overflow.
+
+### Deliberately unchanged
+
+- v0.7 soil values are synthetic static modifiers, not measured soil classes or pedological reconstruction.
+- Water bucket equations and v0.6 L0↔L1 transfer still use their existing global reference parameters in this milestone; applying spatial soil scales to water dynamics is the next bounded task.
+- Existing world save v1/v2 and multiresolution-water persistence formats remain unchanged because soil properties are reproducible derived world truth.
+
 ## 0.6.0
 
 ### Added
