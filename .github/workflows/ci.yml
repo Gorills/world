@@ -33,6 +33,9 @@ jobs:
       - name: Europe-scale multiresolution benchmark
         if: matrix.compiler == 'gcc'
         run: ./build/worldsim_multiresolution_water_benchmark
+      - name: Europe-scale weather benchmark
+        if: matrix.compiler == 'gcc'
+        run: ./build/worldsim_weather_benchmark
 
   sanitizers:
     runs-on: ubuntu-latest
