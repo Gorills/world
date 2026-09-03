@@ -69,6 +69,11 @@ void validate_topology(const World& world, const ContinentalHydrologyResult& top
     if (topology.cells.size() > static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max())) {
         throw std::invalid_argument("continental topology exceeds uint32 routing index range");
     }
+    const auto same_or_adjacent_axis = [](std::int64_t a, std::int64_t b) {
+        return a == b ||
+            (a != std::numeric_limits<std::int64_t>::max() && b == a + 1) ||
+            (a != std::numeric_limits<std::int64_t>::min() && b == a - 1);
+    };
     for (std::size_t i = 0; i < topology.cells.size(); ++i) {
         const auto& cell = topology.cells[i];
         if (topology.index_of(cell.coord) != i) {
@@ -77,6 +82,10 @@ void validate_topology(const World& world, const ContinentalHydrologyResult& top
         if (cell.has_downstream) {
             const auto d = topology.index_of(cell.downstream_coord);
             if (d == i) throw std::invalid_argument("continental topology contains a self-loop");
+            if (!same_or_adjacent_axis(cell.coord.x, cell.downstream_coord.x) ||
+                !same_or_adjacent_axis(cell.coord.y, cell.downstream_coord.y)) {
+                throw std::invalid_argument("continental topology downstream edge is not D8-adjacent");
+            }
         }
     }
 }
