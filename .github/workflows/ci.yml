@@ -30,6 +30,9 @@ jobs:
         run: cmake --build build
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Europe-scale multiresolution benchmark
+        if: matrix.compiler == 'gcc'
+        run: ./build/worldsim_multiresolution_water_benchmark
 
   sanitizers:
     runs-on: ubuntu-latest

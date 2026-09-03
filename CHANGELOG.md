@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.6.0
+
+### Added
+
+- `MultiresolutionWaterState` as the single ownership boundary for coarse L0 and sparse refined L1 dynamic water.
+- Conservative L0→L1 transfer for snow, surface water, soil water and groundwater using actual world-overlap area, including partial boundary cells.
+- Conservative L1→L0 aggregation and repeated materialize/dematerialize support.
+- One exact global integer day across coarse and refined ownership.
+- Coupled daily scheduler with deterministic coarse-upstream → refined-ingress and refined-outlet → coarse-downstream transfer.
+- Atomic mixed-resolution stepping: rejected input does not partially mutate coarse stores, refined stores or clocks.
+- Versioned multiresolution-water persistence containing the global day, coarse state and sparse refined ownership while leaving `World::save()` v1/v2 unchanged.
+- C ABI for multiresolution create/destroy, materialize/aggregate, state copy, forcing, daily stepping and persistence.
+- Europe-scale mixed-resolution benchmark executable and GCC CI observation step.
+- Regression suites for conservation, determinism, partial cells, ocean/boundary cases, state identity, clock consistency, repeated ownership transfer, coupled routing, persistence corruption and C ABI equivalence.
+- `docs/MULTIRESOLUTION_WATER.md` and v0.5 audit notes.
+
+### Fixed / hardened
+
+- Continental dynamic-water inputs now reject finite values that can overflow persistent float state or routed-discharge diagnostics before mutation.
+- `ContinentalWaterState::index_of()` no longer performs signed-overflowing subtraction for extreme out-of-range coordinates.
+- Refined parent L0 water stores are explicitly zero while L1 owns the region, preventing independent double-counted coarse/fine truth.
+- Persistence rejects wrong-world files, duplicate refined parents, refined/global clock mismatch, malformed/truncated input and unexpected trailing data.
+
 ## 0.5.0
 
 ### Added

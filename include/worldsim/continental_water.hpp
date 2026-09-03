@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <vector>
 
 namespace worldsim {
@@ -39,6 +40,12 @@ struct ContinentalWaterStepReport {
 };
 
 class World;
+class MultiresolutionWaterState;
+
+void save_multiresolution_water_state(
+    const MultiresolutionWaterState&, const std::filesystem::path&);
+[[nodiscard]] MultiresolutionWaterState load_multiresolution_water_state(
+    const World&, const ContinentalHydrologyResult&, const std::filesystem::path&);
 
 // Authoritative coarse dynamic water state for the complete L0 world.
 // Mutable internals are intentionally encapsulated: a caller can observe state but cannot
@@ -76,6 +83,11 @@ private:
 
     [[nodiscard]] double total_storage_m3() const;
 
+    friend class MultiresolutionWaterState;
+    friend void save_multiresolution_water_state(
+        const MultiresolutionWaterState&, const std::filesystem::path&);
+    friend MultiresolutionWaterState load_multiresolution_water_state(
+        const World&, const ContinentalHydrologyResult&, const std::filesystem::path&);
     friend ContinentalWaterState make_continental_water_state(
         const World&, const ContinentalHydrologyResult&, const DynamicHydrologyParameters&);
     friend std::vector<ContinentalWaterForcing> make_smooth_continental_daily_forcing(
