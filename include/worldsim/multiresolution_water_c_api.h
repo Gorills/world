@@ -19,6 +19,14 @@ WORLDSIM_API uint64_t ws_multiresolution_water_refined_tile_count(
     const ws_multiresolution_water_state* state);
 WORLDSIM_API int ws_multiresolution_water_is_refined(
     const ws_multiresolution_water_state* state, int64_t climate_x, int64_t climate_y);
+WORLDSIM_API int ws_multiresolution_water_channel_storage_m3(
+    const ws_multiresolution_water_state* state,
+    int64_t climate_x,
+    int64_t climate_y,
+    double* out_volume_m3);
+WORLDSIM_API int ws_multiresolution_water_total_channel_storage_m3(
+    const ws_multiresolution_water_state* state,
+    double* out_volume_m3);
 WORLDSIM_API int ws_multiresolution_water_materialize(
     ws_world* world,
     const ws_continental_hydrology_result* continent,
@@ -27,14 +35,16 @@ WORLDSIM_API int ws_multiresolution_water_materialize(
 WORLDSIM_API int ws_multiresolution_water_aggregate(
     ws_world* world,
     ws_multiresolution_water_state* state,
-    int64_t climate_x, int64_t climate_y);
+    int64_t climate_x,
+    int64_t climate_y);
 WORLDSIM_API int ws_multiresolution_water_copy_coarse_cells(
     const ws_multiresolution_water_state* state,
     ws_continental_water_cell_state* out_cells,
     uint64_t capacity);
 WORLDSIM_API int ws_multiresolution_water_copy_refined_cells(
     const ws_multiresolution_water_state* state,
-    int64_t climate_x, int64_t climate_y,
+    int64_t climate_x,
+    int64_t climate_y,
     ws_dynamic_hydrology_cell_state* out_cells,
     uint64_t capacity);
 WORLDSIM_API int ws_multiresolution_water_make_smooth_daily_forcing(
