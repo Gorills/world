@@ -20,6 +20,15 @@ struct RefinedWaterTileState {
     [[nodiscard]] const DynamicHydrologyCellState& cell(CellCoord coord) const;
 };
 
+// Geometry-derived L0 channel transport. This is reconstructed from the authoritative
+// continental drainage topology and is intentionally not an independent persistence authority.
+struct ChannelTransportProperties {
+    double reach_length_m{};
+    double downhill_gradient{};
+    double residence_days{};
+    double release_fraction_per_day{};
+};
+
 class MultiresolutionWaterState {
 public:
     [[nodiscard]] const WorldConfig& config() const noexcept { return coarse_.config(); }
@@ -35,6 +44,8 @@ public:
     // remains attached to the L0 drainage parent.
     [[nodiscard]] double channel_storage_m3(CellCoord climate_coord) const;
     [[nodiscard]] double total_channel_storage_m3() const noexcept;
+    [[nodiscard]] const ChannelTransportProperties& channel_transport(
+        CellCoord climate_coord) const;
 
 private:
     struct RefinedTile {
@@ -46,6 +57,7 @@ private:
     DynamicHydrologyParameters parameters_;
     std::unordered_map<CellCoord, RefinedTile, CellCoordHash> refined_;
     std::vector<double> channel_storage_m3_;
+    std::vector<ChannelTransportProperties> channel_transport_;
 
     [[nodiscard]] ContinentalWaterCellState& coarse_cell_mutable(std::size_t index) noexcept;
     [[nodiscard]] double coarse_area_m2(std::size_t index) const noexcept;
@@ -92,7 +104,7 @@ void aggregate_refined_water_tile(
 
 // Dynamic water remains an explicit simulation state rather than becoming implicit World state.
 // This versioned file persists its exact global day, terrestrial stores, L0 channel storage and
-// sparse refined ownership.
+// sparse refined ownership. Channel transport geometry is derived from topology on create/load.
 void save_multiresolution_water_state(
     const MultiresolutionWaterState& state,
     const std::filesystem::path& path);

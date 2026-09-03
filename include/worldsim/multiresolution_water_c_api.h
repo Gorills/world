@@ -8,6 +8,13 @@ extern "C" {
 
 typedef struct ws_multiresolution_water_state ws_multiresolution_water_state;
 
+typedef struct ws_channel_transport_properties {
+    double reach_length_m;
+    double downhill_gradient;
+    double residence_days;
+    double release_fraction_per_day;
+} ws_channel_transport_properties;
+
 WORLDSIM_API ws_multiresolution_water_state* ws_world_multiresolution_water_create(
     ws_world* world,
     const ws_continental_hydrology_result* continent,
@@ -27,6 +34,11 @@ WORLDSIM_API int ws_multiresolution_water_channel_storage_m3(
 WORLDSIM_API int ws_multiresolution_water_total_channel_storage_m3(
     const ws_multiresolution_water_state* state,
     double* out_volume_m3);
+WORLDSIM_API int ws_multiresolution_water_channel_transport(
+    const ws_multiresolution_water_state* state,
+    int64_t climate_x,
+    int64_t climate_y,
+    ws_channel_transport_properties* out_properties);
 WORLDSIM_API int ws_multiresolution_water_materialize(
     ws_world* world,
     const ws_continental_hydrology_result* continent,

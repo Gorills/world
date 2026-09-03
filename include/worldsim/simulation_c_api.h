@@ -1,5 +1,6 @@
 #pragma once
 
+#include "worldsim/multiresolution_water_c_api.h"
 #include "worldsim/weather_c_api.h"
 
 #ifdef __cplusplus
@@ -30,6 +31,11 @@ WORLDSIM_API int ws_simulation_channel_storage_m3(
 WORLDSIM_API int ws_simulation_total_channel_storage_m3(
     const ws_simulation_state* state,
     double* out_volume_m3);
+WORLDSIM_API int ws_simulation_channel_transport(
+    const ws_simulation_state* state,
+    int64_t climate_x,
+    int64_t climate_y,
+    ws_channel_transport_properties* out_properties);
 
 WORLDSIM_API int ws_simulation_sample_region(
     const ws_simulation_state* state,

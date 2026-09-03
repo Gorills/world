@@ -17,9 +17,7 @@ namespace {
 
 constexpr double kSecondsPerDay = 86'400.0;
 constexpr double kMaxWaterDepthMm = 1.0e30;
-// Fixed one-day e-folding linear reservoir. Newly arriving water cannot be released
-// until the following daily step, so no volume can traverse more than one L0 edge/day.
-constexpr double kChannelReleaseFractionPerDay = 0.6321205588285577;
+constexpr double kSqrt2 = 1.4142135623730950488;
 constexpr std::uint32_t kNoDownstream = 0xFFFFFFFFu;
 constexpr std::size_t kNoIndex = std::numeric_limits<std::size_t>::max();
 
@@ -88,6 +86,42 @@ void require_valid_storage(const DynamicHydrologyCellState& c) {
         !std::isfinite(stored_depth_mm(c)) || stored_depth_mm(c) > kMaxWaterDepthMm) {
         throw std::invalid_argument("refined multiresolution water storage is invalid");
     }
+}
+
+ChannelTransportProperties derive_channel_transport(
+    const ContinentalHydrologyResult& topology,
+    std::size_t index) {
+    const auto& cell = topology.cells.at(index);
+    if (!std::isfinite(cell.filled_elevation_m)) {
+        throw std::invalid_argument("continental topology contains non-finite filled elevation");
+    }
+
+    bool diagonal = false;
+    double downstream_filled_elevation_m = static_cast<double>(cell.filled_elevation_m);
+    if (cell.has_downstream) {
+        const auto& downstream = topology.cell(cell.downstream_coord);
+        if (!std::isfinite(downstream.filled_elevation_m)) {
+            throw std::invalid_argument("continental topology contains non-finite downstream filled elevation");
+        }
+        diagonal = cell.coord.x != downstream.coord.x && cell.coord.y != downstream.coord.y;
+        downstream_filled_elevation_m = static_cast<double>(downstream.filled_elevation_m);
+    }
+
+    const double length_cells = diagonal ? kSqrt2 : 1.0;
+    ChannelTransportProperties out;
+    out.reach_length_m = length_cells * static_cast<double>(topology.config.climate_cell_m);
+    const double drop_m = cell.has_downstream
+        ? std::max(0.0, static_cast<double>(cell.filled_elevation_m) - downstream_filled_elevation_m)
+        : 0.0;
+    out.downhill_gradient = drop_m / out.reach_length_m;
+    out.residence_days = length_cells / (1.0 + out.downhill_gradient);
+    out.release_fraction_per_day = 1.0 - std::exp(-1.0 / out.residence_days);
+    if (!(out.reach_length_m > 0.0) || !finite_non_negative(out.downhill_gradient) ||
+        !(out.residence_days > 0.0) || !std::isfinite(out.residence_days) ||
+        !(out.release_fraction_per_day > 0.0) || !(out.release_fraction_per_day < 1.0)) {
+        throw std::invalid_argument("continental topology produced invalid channel transport geometry");
+    }
+    return out;
 }
 
 void add_channel_volume(double& target, double volume, const char* message) {
@@ -305,6 +339,11 @@ double MultiresolutionWaterState::total_channel_storage_m3() const noexcept {
     return total;
 }
 
+const ChannelTransportProperties& MultiresolutionWaterState::channel_transport(
+    CellCoord climate_coord) const {
+    return channel_transport_.at(coarse_.index_of(climate_coord));
+}
+
 ContinentalWaterCellState& MultiresolutionWaterState::coarse_cell_mutable(std::size_t index) noexcept {
     return coarse_.cells_[index];
 }
@@ -381,6 +420,10 @@ MultiresolutionWaterState make_multiresolution_water_state(
     state.coarse_ = make_continental_water_state(world, topology, parameters);
     state.parameters_ = parameters;
     state.channel_storage_m3_.assign(state.coarse_.cells_.size(), 0.0);
+    state.channel_transport_.reserve(topology.cells.size());
+    for (std::size_t i = 0; i < topology.cells.size(); ++i) {
+        state.channel_transport_.push_back(derive_channel_transport(topology, i));
+    }
     return state;
 }
 
@@ -536,8 +579,9 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
     if (forcing.size() != state.coarse_state().cells().size()) {
         throw std::invalid_argument("multiresolution forcing must contain exactly one record per L0 cell");
     }
-    if (state.channel_storage_m3_.size() != forcing.size()) {
-        throw std::logic_error("multiresolution channel storage shape is inconsistent");
+    if (state.channel_storage_m3_.size() != forcing.size() ||
+        state.channel_transport_.size() != forcing.size()) {
+        throw std::logic_error("multiresolution channel state shape is inconsistent");
     }
 
     ContinentalWaterStepReport report;
@@ -633,16 +677,17 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
             c, forcing[i], state.coarse_area_m2(i), state.parameters(), coarse_soil_buckets[i], report);
     }
 
-    // Release only the channel storage that existed at the beginning of this day. Every
-    // released parcel crosses at most one L0 edge. A release entering a refined parent may
-    // traverse that parent's internal L1 graph, but its tile outlet returns to the parent's
-    // next channel store and cannot cross another L0 edge until the next day.
+    // Release only channel storage that existed at the beginning of this day. Geometry changes
+    // the fraction released by each L0 reach, but every released parcel still crosses at most one
+    // L0 edge. A release entering a refined parent may traverse that parent's internal L1 graph;
+    // its tile outlet returns to the parent's next channel store and cannot cross another L0 edge
+    // until the next day.
     for (const auto index32 : state.coarse_routing_order()) {
         const auto i = static_cast<std::size_t>(index32);
         if (state.coarse_is_ocean(i)) continue;
         const auto coord = state.coarse_state().coord_of(i);
         const double old_channel = state.channel_storage_m3_[i];
-        const double release = old_channel * kChannelReleaseFractionPerDay;
+        const double release = old_channel * state.channel_transport_[i].release_fraction_per_day;
         channel_next[i] -= release;
         coarse_next[i].last_routed_discharge_m3_s = static_cast<float>(release / kSecondsPerDay);
         if (release == 0.0) continue;
