@@ -255,9 +255,12 @@ std::size_t RefinedWaterTileState::index_of(CellCoord coord) const {
         throw std::out_of_range("refined water tile coordinate is not representable");
     }
     const CellCoord min{climate_coord.x * ratio, climate_coord.y * ratio};
-    const auto dx = coord.x - min.x;
-    const auto dy = coord.y - min.y;
-    if (dx < 0 || dy < 0 || dx >= ratio || dy >= ratio) {
+    if (coord.x < min.x || coord.y < min.y) {
+        throw std::out_of_range("refined water coordinate is outside tile");
+    }
+    const auto dx = static_cast<std::uint64_t>(coord.x) - static_cast<std::uint64_t>(min.x);
+    const auto dy = static_cast<std::uint64_t>(coord.y) - static_cast<std::uint64_t>(min.y);
+    if (dx >= static_cast<std::uint64_t>(ratio) || dy >= static_cast<std::uint64_t>(ratio)) {
         throw std::out_of_range("refined water coordinate is outside tile");
     }
     return static_cast<std::size_t>(dy) * 8U + static_cast<std::size_t>(dx);
