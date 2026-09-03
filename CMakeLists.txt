@@ -110,6 +110,13 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_dynamic_hydrology_index_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_dynamic_hydrology_index_tests COMMAND worldsim_dynamic_hydrology_index_tests)
 
+    add_executable(worldsim_dynamic_hydrology_c_api_atomicity_tests
+        tests/test_dynamic_hydrology_c_api_atomicity.c)
+    target_link_libraries(worldsim_dynamic_hydrology_c_api_atomicity_tests PRIVATE worldsim::worldsim)
+    set_target_properties(worldsim_dynamic_hydrology_c_api_atomicity_tests PROPERTIES LINKER_LANGUAGE CXX)
+    add_test(NAME worldsim_dynamic_hydrology_c_api_atomicity_tests
+        COMMAND worldsim_dynamic_hydrology_c_api_atomicity_tests)
+
     add_executable(worldsim_multiresolution_water_tests tests/test_multiresolution_water.cpp)
     target_link_libraries(worldsim_multiresolution_water_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_multiresolution_water_tests COMMAND worldsim_multiresolution_water_tests)
