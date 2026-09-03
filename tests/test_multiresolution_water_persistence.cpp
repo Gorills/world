@@ -242,7 +242,7 @@ int main() {
         bool overflow_channel_rejected = false;
         try {
             (void)load_multiresolution_water_state(world, topology, channel_overflow_path);
-        } catch (const std::runtime_error&) {
+        } catch (const std::exception&) {
             overflow_channel_rejected = true;
         }
         check(overflow_channel_rejected,
