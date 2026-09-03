@@ -95,6 +95,14 @@ int main(void) {
           "simulation C ABI global clock starts at zero");
     check(ws_simulation_materialized_patch_count(simulation) == 0,
           "simulation construction does not materialize L2");
+    double initial_channel = -1.0;
+    double initial_total_channel = -1.0;
+    check(ws_simulation_channel_storage_m3(simulation, 0, 0, &initial_channel) == 0 &&
+          initial_channel == 0.0,
+          "simulation C ABI channel query starts at zero");
+    check(ws_simulation_total_channel_storage_m3(simulation, &initial_total_channel) == 0 &&
+          initial_total_channel == 0.0,
+          "simulation C ABI total channel storage starts at zero");
 
     ws_regional_sample region;
     memset(&region, 0, sizeof(region));
@@ -143,6 +151,17 @@ int main(void) {
               "simulation C ABI water report remains finite");
     }
 
+    double channel_before_checkpoint = -1.0;
+    double total_channel_before_checkpoint = -1.0;
+    check(ws_simulation_channel_storage_m3(
+              simulation, 0, 0, &channel_before_checkpoint) == 0 &&
+          channel_before_checkpoint >= 0.0,
+          "simulation C ABI exposes finite refined-parent channel storage");
+    check(ws_simulation_total_channel_storage_m3(
+              simulation, &total_channel_before_checkpoint) == 0 &&
+          total_channel_before_checkpoint > 0.0,
+          "simulation C ABI exposes nonzero conserved channel storage");
+
     check(ws_simulation_copy_refined_water_cells(
               simulation, 0, 0, refined, WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT) == 0,
           "simulation C ABI snapshots current refined state before checkpoint");
@@ -180,6 +199,14 @@ int main(void) {
         check(ws_simulation_refined_tile_count(loaded) == 1 &&
               ws_simulation_is_refined(loaded, 0, 0) == 1,
               "simulation C ABI checkpoint preserves refined ownership");
+        double channel_loaded = -1.0;
+        double total_channel_loaded = -1.0;
+        check(ws_simulation_channel_storage_m3(loaded, 0, 0, &channel_loaded) == 0 &&
+              channel_loaded == channel_before_checkpoint,
+              "simulation C ABI checkpoint preserves exact refined-parent channel storage");
+        check(ws_simulation_total_channel_storage_m3(loaded, &total_channel_loaded) == 0 &&
+              total_channel_loaded == total_channel_before_checkpoint,
+              "simulation C ABI checkpoint preserves exact total channel storage");
 
         ws_weather_cell_sample weather_loaded;
         memset(&weather_loaded, 0, sizeof(weather_loaded));
@@ -216,12 +243,23 @@ int main(void) {
               ws_simulation_advance_day(loaded, &loaded_next) == 0 &&
               same_step_report(&original_next, &loaded_next),
               "simulation C ABI reload preserves exact future evolution");
+        double original_future_channel = -1.0;
+        double loaded_future_channel = -1.0;
+        check(ws_simulation_total_channel_storage_m3(
+                  simulation, &original_future_channel) == 0 &&
+              ws_simulation_total_channel_storage_m3(
+                  loaded, &loaded_future_channel) == 0 &&
+              original_future_channel == loaded_future_channel,
+              "simulation C ABI reload preserves exact future channel evolution");
 
         check(ws_simulation_save_checkpoint(loaded, checkpoint_path) == 0,
               "simulation C ABI atomically replaces an existing checkpoint");
         check(ws_simulation_materialize_refined_water_tile(loaded, INT64_MAX, INT64_MAX) == -1 &&
               ws_simulation_refined_tile_count(loaded) == 1,
               "simulation C ABI rejected refinement leaves ownership unchanged");
+        check(ws_simulation_channel_storage_m3(
+                  loaded, INT64_MAX, INT64_MAX, &channel_loaded) == -1,
+              "simulation C ABI channel query rejects an out-of-range L0 coordinate");
         check(ws_simulation_aggregate_refined_water_tile(loaded, 0, 0) == 0 &&
               ws_simulation_refined_tile_count(loaded) == 0,
               "simulation C ABI aggregates refined ownership through unified owner");
