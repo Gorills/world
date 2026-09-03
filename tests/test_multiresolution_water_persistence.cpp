@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <limits>
 #include <stdexcept>
 #include <vector>
 
@@ -49,6 +50,16 @@ bool same_cell(const worldsim::DynamicHydrologyCellState& a,
            a.last_quick_runoff_mm == b.last_quick_runoff_mm &&
            a.last_baseflow_mm == b.last_baseflow_mm &&
            a.last_routed_discharge_m3_s == b.last_routed_discharge_m3_s;
+}
+
+bool same_channels(const worldsim::MultiresolutionWaterState& a,
+                   const worldsim::MultiresolutionWaterState& b) {
+    if (a.coarse_state().cells().size() != b.coarse_state().cells().size()) return false;
+    for (std::size_t i = 0; i < a.coarse_state().cells().size(); ++i) {
+        const auto coord = a.coarse_state().coord_of(i);
+        if (a.channel_storage_m3(coord) != b.channel_storage_m3(coord)) return false;
+    }
+    return true;
 }
 
 std::vector<char> read_bytes(const std::filesystem::path& path) {
@@ -104,6 +115,10 @@ int main() {
     const auto trailing_path = root.string() + ".trailing.bin";
     const auto clock_path = root.string() + ".clock.bin";
     const auto duplicate_path = root.string() + ".duplicate.bin";
+    const auto channel_bad_path = root.string() + ".channel-bad.bin";
+    const auto channel_overflow_path = root.string() + ".channel-overflow.bin";
+    const auto legacy_v3_path = root.string() + ".legacy-source-v3.bin";
+    const auto legacy_v2_path = root.string() + ".legacy-v2.bin";
 
     World world(config());
     const auto topology = world.analyze_continental_hydrology({0.1f});
@@ -115,6 +130,8 @@ int main() {
         const auto forcing = make_smooth_continental_daily_forcing(state.coarse_state());
         (void)advance_multiresolution_water_day(world, state, forcing);
     }
+    check(state.total_channel_storage_m3() > 0.0,
+          "persistence fixture contains nonzero retained channel water");
     save_multiresolution_water_state(state, valid_path);
     auto loaded = load_multiresolution_water_state(world, topology, valid_path);
 
@@ -130,6 +147,9 @@ int main() {
         }
     }
     check(coarse_equal, "persistence round trip preserves all coarse stores and diagnostics exactly");
+    check(same_channels(state, loaded) &&
+          loaded.total_channel_storage_m3() == state.total_channel_storage_m3(),
+          "persistence round trip preserves all L0 channel storage exactly");
 
     const auto& before_tile = state.refined_tile(parent);
     const auto& after_tile = loaded.refined_tile(parent);
@@ -144,11 +164,15 @@ int main() {
 
     auto original_aggregated = state;
     auto loaded_aggregated = loaded;
+    const double channel_before_aggregate = state.channel_storage_m3(parent);
     aggregate_refined_water_tile(world, original_aggregated, parent);
     aggregate_refined_water_tile(world, loaded_aggregated, parent);
     check(same_cell(original_aggregated.coarse_state().cell(parent),
                     loaded_aggregated.coarse_state().cell(parent)),
           "reloaded refined ownership aggregates to the same authoritative L0 state");
+    check(original_aggregated.channel_storage_m3(parent) == channel_before_aggregate &&
+          loaded_aggregated.channel_storage_m3(parent) == channel_before_aggregate,
+          "aggregation after reload leaves L0 channel storage unchanged");
 
     const auto bytes = read_bytes(valid_path);
     check(bytes.size() > 32, "persistence fixture produced a nontrivial file");
@@ -175,15 +199,55 @@ int main() {
     }
     check(trailing_rejected, "unexpected persistence tail data is rejected");
 
-    // Fixed v1 layout through the coarse array:
+    // Common layout through the coarse array:
     // magic(8) + version(4) + WorldConfig serialized fields(56) + parameters(40) +
     // day(8) + min coord(16) + dimensions(8) + coarse count(8) = 148 bytes.
+    constexpr std::size_t kVersionOffset = 8;
     constexpr std::size_t kCoarseCellsOffset = 148;
     constexpr std::size_t kSerializedCoarseCellBytes = sizeof(float) * 8;
     const auto coarse_count = state.coarse_state().cells().size();
-    const auto refined_count_offset = kCoarseCellsOffset + coarse_count * kSerializedCoarseCellBytes;
+    const auto channel_count_offset = kCoarseCellsOffset + coarse_count * kSerializedCoarseCellBytes;
+    const auto channel_values_offset = channel_count_offset + sizeof(std::uint64_t);
+    const auto refined_count_offset = channel_values_offset + coarse_count * sizeof(double);
     const auto first_parent_offset = refined_count_offset + sizeof(std::uint64_t);
     const auto first_tile_day_offset = first_parent_offset + sizeof(std::int64_t) * 2;
+
+    check(read_pod_at<std::uint64_t>(bytes, channel_count_offset) == coarse_count,
+          "v3 persistence stores one channel volume per L0 cell");
+    auto bad_channel = bytes;
+    const double nan = std::numeric_limits<double>::quiet_NaN();
+    write_pod_at(bad_channel, channel_values_offset, nan);
+    write_bytes(channel_bad_path, bad_channel);
+    bool bad_channel_rejected = false;
+    try {
+        (void)load_multiresolution_water_state(world, topology, channel_bad_path);
+    } catch (const std::runtime_error&) {
+        bad_channel_rejected = true;
+    }
+    check(bad_channel_rejected, "non-finite saved channel storage is rejected");
+
+    std::vector<std::size_t> land_indices;
+    for (std::size_t i = 0; i < topology.cells.size() && land_indices.size() < 2; ++i) {
+        if (!topology.cells[i].ocean) land_indices.push_back(i);
+    }
+    check(land_indices.size() == 2, "persistence fixture contains two terrestrial channel cells");
+    if (land_indices.size() == 2) {
+        auto overflow_channel = bytes;
+        const double huge = std::numeric_limits<double>::max();
+        write_pod_at(
+            overflow_channel, channel_values_offset + land_indices[0] * sizeof(double), huge);
+        write_pod_at(
+            overflow_channel, channel_values_offset + land_indices[1] * sizeof(double), huge);
+        write_bytes(channel_overflow_path, overflow_channel);
+        bool overflow_channel_rejected = false;
+        try {
+            (void)load_multiresolution_water_state(world, topology, channel_overflow_path);
+        } catch (const std::exception&) {
+            overflow_channel_rejected = true;
+        }
+        check(overflow_channel_rejected,
+              "finite per-cell channels whose authoritative total overflows are rejected on load");
+    }
 
     auto wrong_clock = bytes;
     const std::int64_t different_day = state.simulated_day() + 1;
@@ -216,6 +280,27 @@ int main() {
         check(duplicate_rejected, "duplicate refined parent ownership is rejected");
     }
 
+    // Construct an actual v2-shaped day-zero fixture from a v3 writer: no retained channel
+    // water exists, so removing only the v3 channel block exactly represents the old semantics.
+    auto legacy_state = make_multiresolution_water_state(world, topology);
+    (void)materialize_refined_water_tile(world, topology, legacy_state, parent);
+    save_multiresolution_water_state(legacy_state, legacy_v3_path);
+    auto legacy_bytes = read_bytes(legacy_v3_path);
+    const auto legacy_coarse_count = legacy_state.coarse_state().cells().size();
+    const auto legacy_channel_count_offset =
+        kCoarseCellsOffset + legacy_coarse_count * kSerializedCoarseCellBytes;
+    const auto legacy_channel_block_bytes = sizeof(std::uint64_t) + legacy_coarse_count * sizeof(double);
+    const std::uint32_t v2 = 2;
+    write_pod_at(legacy_bytes, kVersionOffset, v2);
+    legacy_bytes.erase(
+        legacy_bytes.begin() + static_cast<std::ptrdiff_t>(legacy_channel_count_offset),
+        legacy_bytes.begin() + static_cast<std::ptrdiff_t>(legacy_channel_count_offset + legacy_channel_block_bytes));
+    write_bytes(legacy_v2_path, legacy_bytes);
+    auto migrated_v2 = load_multiresolution_water_state(world, topology, legacy_v2_path);
+    check(migrated_v2.simulated_day() == 0 && migrated_v2.is_refined(parent) &&
+          migrated_v2.total_channel_storage_m3() == 0.0,
+          "v2 persistence migrates to v3 semantics with zero invented channel water");
+
     auto wrong_cfg = config();
     ++wrong_cfg.seed;
     World wrong_world(wrong_cfg);
@@ -233,6 +318,10 @@ int main() {
     std::filesystem::remove(trailing_path);
     std::filesystem::remove(clock_path);
     std::filesystem::remove(duplicate_path);
+    std::filesystem::remove(channel_bad_path);
+    std::filesystem::remove(channel_overflow_path);
+    std::filesystem::remove(legacy_v3_path);
+    std::filesystem::remove(legacy_v2_path);
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

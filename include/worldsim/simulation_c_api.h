@@ -22,6 +22,14 @@ WORLDSIM_API int ws_simulation_is_refined(
     const ws_simulation_state* state,
     int64_t climate_x,
     int64_t climate_y);
+WORLDSIM_API int ws_simulation_channel_storage_m3(
+    const ws_simulation_state* state,
+    int64_t climate_x,
+    int64_t climate_y,
+    double* out_volume_m3);
+WORLDSIM_API int ws_simulation_total_channel_storage_m3(
+    const ws_simulation_state* state,
+    double* out_volume_m3);
 
 WORLDSIM_API int ws_simulation_sample_region(
     const ws_simulation_state* state,

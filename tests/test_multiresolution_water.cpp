@@ -59,7 +59,9 @@ worldsim::CellCoord find_partial_parent(const worldsim::ContinentalHydrologyResu
 
 worldsim::CellCoord find_routed_source(const worldsim::ContinentalHydrologyResult& topology) {
     for (const auto& cell : topology.cells) {
-        if (!cell.ocean && cell.has_downstream) return cell.coord;
+        if (!cell.ocean && cell.has_downstream && !topology.cell(cell.downstream_coord).ocean) {
+            return cell.coord;
+        }
     }
     throw std::runtime_error("fixture has no routed land source");
 }
@@ -75,6 +77,15 @@ bool same_refined_cell(const worldsim::DynamicHydrologyCellState& a,
         a.last_quick_runoff_mm == b.last_quick_runoff_mm &&
         a.last_baseflow_mm == b.last_baseflow_mm &&
         a.last_routed_discharge_m3_s == b.last_routed_discharge_m3_s;
+}
+
+std::vector<double> channel_snapshot(const worldsim::MultiresolutionWaterState& state) {
+    std::vector<double> out;
+    out.reserve(state.coarse_state().cells().size());
+    for (std::size_t i = 0; i < state.coarse_state().cells().size(); ++i) {
+        out.push_back(state.channel_storage_m3(state.coarse_state().coord_of(i)));
+    }
+    return out;
 }
 
 void advance_days(const worldsim::World& world,
@@ -100,6 +111,7 @@ int main() {
     const CellCoord partial_parent = find_partial_parent(topology, world.config());
     const auto parent_index = state.coarse_state().index_of(partial_parent);
     const auto parent_before = state.coarse_state().cells()[parent_index];
+    const double parent_channel_before = state.channel_storage_m3(partial_parent);
     const double parent_area = overlap_area_m2(
         partial_parent, world.config().climate_cell_m, world.config().bounds);
 
@@ -109,13 +121,15 @@ int main() {
           "materialization creates exactly one sparse refined owner");
     check(refined.simulated_day == state.simulated_day(),
           "refined tile inherits the exact global integer day");
+    check(state.channel_storage_m3(partial_parent) == parent_channel_before,
+          "water refinement leaves parent L0 channel storage unchanged");
 
     const auto& coarse_after_materialize = state.coarse_state().cell(partial_parent);
     check(coarse_after_materialize.snow_water_equivalent_mm == 0.0f &&
           coarse_after_materialize.surface_water_mm == 0.0f &&
           coarse_after_materialize.soil_water_mm == 0.0f &&
           coarse_after_materialize.groundwater_mm == 0.0f,
-          "refined parent has no independent coarse water stores");
+          "refined parent has no independent coarse terrestrial stores");
 
     double child_area = 0.0;
     double snow_m3 = 0.0;
@@ -140,7 +154,7 @@ int main() {
           near(surface_m3, volume(parent_before.surface_water_mm, parent_area), 1e-5) &&
           near(soil_m3, volume(parent_before.soil_water_mm, parent_area), 0.5, 2e-6) &&
           near(groundwater_m3, volume(parent_before.groundwater_mm, parent_area), 1e-5),
-          "L0 to L1 refinement conserves every water store on a partial parent");
+          "L0 to L1 refinement conserves every terrestrial water store on a partial parent");
     check(deterministic_refinement, "L0 to L1 refinement is deterministic");
 
     const auto& repeated = materialize_refined_water_tile(world, topology, state, partial_parent);
@@ -149,13 +163,15 @@ int main() {
 
     aggregate_refined_water_tile(world, state, partial_parent);
     check(!state.is_refined(partial_parent) && state.refined_tile_count() == 0,
-          "aggregation releases detailed ownership");
+          "aggregation releases detailed terrestrial ownership");
+    check(state.channel_storage_m3(partial_parent) == parent_channel_before,
+          "aggregation leaves parent L0 channel storage unchanged");
     const auto& parent_roundtrip = state.coarse_state().cell(partial_parent);
     check(near(parent_roundtrip.snow_water_equivalent_mm, parent_before.snow_water_equivalent_mm, 1e-5) &&
           near(parent_roundtrip.surface_water_mm, parent_before.surface_water_mm, 1e-5) &&
           near(parent_roundtrip.soil_water_mm, parent_before.soil_water_mm, 1e-5) &&
           near(parent_roundtrip.groundwater_mm, parent_before.groundwater_mm, 1e-5),
-          "L0 to L1 to L0 round trip preserves all four parent depths");
+          "L0 to L1 to L0 round trip preserves all four parent terrestrial depths");
     (void)materialize_refined_water_tile(world, topology, state, partial_parent);
     aggregate_refined_water_tile(world, state, partial_parent);
     check(state.refined_tile_count() == 0,
@@ -203,27 +219,52 @@ int main() {
     std::vector<ContinentalWaterForcing> pulse(topology.cells.size());
     const auto source_index = topology.index_of(source);
     pulse[source_index] = {100.0f, 10.0f, 0.0f};
-    const auto route_report = advance_multiresolution_water_day(world, route_state, pulse);
-    const auto route_twin_report = advance_multiresolution_water_day(world, route_twin, pulse);
-    check(near(route_report.precipitation_m3, route_report.terminal_outflow_m3, 0.5, 2e-7) &&
-          near(route_report.storage_after_m3, 0.0, 0.5) &&
-          std::abs(route_report.water_balance_error_m3) < 0.5,
-          "coarse upstream to refined ingress to coarse downstream routes water exactly once");
-    check(near(route_report.terminal_outflow_m3, route_twin_report.terminal_outflow_m3, 1e-6) &&
-          near(route_report.storage_after_m3, route_twin_report.storage_after_m3, 1e-6),
-          "coupled coarse/refined stepping is deterministic");
+
+    const auto day1 = advance_multiresolution_water_day(world, route_state, pulse);
+    const auto day1_twin = advance_multiresolution_water_day(world, route_twin, pulse);
+    check(day1.terminal_outflow_m3 == 0.0 && route_state.channel_storage_m3(source) > 0.0 &&
+          route_state.channel_storage_m3(downstream) == 0.0 &&
+          near(day1.precipitation_m3, day1.storage_after_m3, 0.5, 2e-7) &&
+          std::abs(day1.water_balance_error_m3) < 0.5,
+          "new runoff remains in source channel on pulse day instead of traversing the L0 DAG");
+    check(day1.storage_after_m3 == day1_twin.storage_after_m3 &&
+          route_state.channel_storage_m3(source) == route_twin.channel_storage_m3(source),
+          "delayed source-channel capture is deterministic");
+
+    std::vector<ContinentalWaterForcing> dry(topology.cells.size());
+    const double source_channel_day1 = route_state.channel_storage_m3(source);
+    const auto day2 = advance_multiresolution_water_day(world, route_state, dry);
+    const auto day2_twin = advance_multiresolution_water_day(world, route_twin, dry);
+    check(route_state.channel_storage_m3(source) < source_channel_day1 &&
+          route_state.channel_storage_m3(source) > 0.0 &&
+          route_state.channel_storage_m3(downstream) > 0.0 &&
+          std::abs(day2.water_balance_error_m3) < 0.5,
+          "day-two source channel release crosses one L0 edge into refined downstream ownership");
     bool refined_route_observed = false;
     for (const auto& cell : route_state.refined_tile(downstream).cells) {
         refined_route_observed = refined_route_observed || cell.last_routed_discharge_m3_s > 0.0f;
     }
-    check(refined_route_observed, "coarse upstream volume traverses the refined L1 drainage graph");
-    check(route_state.simulated_day() == 1 && route_state.refined_tile(downstream).simulated_day == 1,
-          "coarse and refined ownership advance one exact shared day");
+    check(refined_route_observed,
+          "released upstream channel water traverses the refined L1 drainage graph once it arrives");
+    check(day2.terminal_outflow_m3 == day2_twin.terminal_outflow_m3 &&
+          route_state.channel_storage_m3(downstream) == route_twin.channel_storage_m3(downstream),
+          "coarse-channel to refined-ingress transport is deterministic");
+    check(route_state.simulated_day() == 2 && route_state.refined_tile(downstream).simulated_day == 2,
+          "channel transport keeps coarse and refined ownership on one exact clock");
+
+    const double refined_channel_before_transfer = route_state.channel_storage_m3(downstream);
+    aggregate_refined_water_tile(world, route_state, downstream);
+    check(route_state.channel_storage_m3(downstream) == refined_channel_before_transfer,
+          "aggregation cannot consume or duplicate L0 channel storage");
+    (void)materialize_refined_water_tile(world, topology, route_state, downstream);
+    check(route_state.channel_storage_m3(downstream) == refined_channel_before_transfer,
+          "re-refinement cannot consume or duplicate L0 channel storage");
 
     auto atomic_state = make_multiresolution_water_state(world, topology);
     (void)materialize_refined_water_tile(world, topology, atomic_state, partial_parent);
     const auto coarse_before_invalid = atomic_state.coarse_state().cells();
     const auto detailed_before_invalid = atomic_state.refined_tile(partial_parent).cells;
+    const auto channels_before_invalid = channel_snapshot(atomic_state);
     const auto day_before_invalid = atomic_state.simulated_day();
     auto invalid_forcing = make_smooth_continental_daily_forcing(atomic_state.coarse_state());
     invalid_forcing[topology.index_of(partial_parent)].precipitation_mm =
@@ -242,8 +283,8 @@ int main() {
     check(invalid_threw && atomic_state.simulated_day() == day_before_invalid &&
           std::memcmp(coarse_before_invalid.data(), atomic_state.coarse_state().cells().data(),
                       coarse_before_invalid.size() * sizeof(ContinentalWaterCellState)) == 0 &&
-          detailed_unchanged,
-          "invalid coupled forcing is rejected without partial coarse or refined mutation");
+          detailed_unchanged && channel_snapshot(atomic_state) == channels_before_invalid,
+          "invalid coupled forcing is rejected without partial terrestrial/channel mutation");
 
     WorldConfig ocean_cfg = partial_land_config(93);
     ocean_cfg.sea_level_m = 10'000.0f;
@@ -256,8 +297,9 @@ int main() {
     for (auto& f : ocean_forcing) f = {12.0f, 7.0f, 2.0f};
     const auto ocean_report = advance_multiresolution_water_day(ocean_world, ocean_state, ocean_forcing);
     check(ocean_report.precipitation_m3 == 0.0 && ocean_report.storage_after_m3 == 0.0 &&
-          ocean_report.terminal_outflow_m3 == 0.0 && ocean_state.simulated_day() == 1,
-          "refined ocean ownership advances clock without creating terrestrial water");
+          ocean_report.terminal_outflow_m3 == 0.0 && ocean_state.total_channel_storage_m3() == 0.0 &&
+          ocean_state.simulated_day() == 1,
+          "refined ocean ownership advances clock without creating terrestrial or channel water");
 
     if (failures != 0) {
         std::cerr << failures << " test(s) failed\n";

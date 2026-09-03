@@ -1,6 +1,6 @@
-# Unified simulation state and checkpoints — v0.10
+# Unified simulation state and checkpoints — v0.10 lifecycle, extended by v0.11
 
-v0.10 introduces `SimulationState` as the lifecycle boundary for a running WorldSim world.
+v0.10 introduced `SimulationState` as the lifecycle boundary for a running WorldSim world. v0.11 keeps that ownership/container design unchanged and adds persistent channel storage inside the existing Multiresolution Water component. The channel-specific contract is documented in `docs/CHANNEL_TRANSPORT.md`.
 
 The goal is not to hide the existing subsystems. It is to ensure that persistent world history, transient weather and conserved multiresolution water can no longer be accidentally treated as unrelated save generations by normal application code.
 
@@ -10,10 +10,10 @@ A `SimulationState` owns:
 
 - one `World`;
 - one `WeatherState`;
-- one `MultiresolutionWaterState`;
+- one `MultiresolutionWaterState`, including v0.11 L0 channel storage;
 - the continental drainage topology derived from that `World`.
 
-Continental topology is intentionally **derived state**, not a fourth persistence authority. It is rebuilt from the loaded `World` when a compound checkpoint is restored.
+Continental topology is intentionally **derived state**, not a fourth persistence authority. Channel storage is likewise not a fourth component: it is conserved water owned by `MultiresolutionWaterState`.
 
 Public component accessors are const views. Runtime mutation is routed through simulation commands:
 
@@ -55,11 +55,11 @@ auto world = worldsim::World::load("legacy.ws");
 auto simulation = worldsim::SimulationState::from_world(std::move(world));
 ```
 
-`from_world()` preserves the exact existing `World` configuration and materialized L2 history. Weather and water begin at aligned day zero because those transient authorities were not part of the legacy World file.
+`from_world()` preserves the exact existing `World` configuration and materialized L2 history. Weather and water begin at aligned day zero because those transient authorities were not part of the legacy World file. In v0.11 the new channel array also begins at zero.
 
 ## Compound checkpoint format
 
-A v0.10 checkpoint contains one container header followed by exactly three authoritative sections in fixed order:
+A simulation checkpoint contains one container header followed by exactly three authoritative sections in fixed order:
 
 1. World;
 2. Weather;
@@ -73,6 +73,8 @@ The header stores:
 - for each section: identifier, byte length and FNV-1a checksum.
 
 The section payloads are the existing versioned component formats. This deliberately reuses their validation instead of introducing a second serializer for the same state.
+
+v0.11 does not add a channel section. Multiresolution-water format v3 stores the persistent L0 channel array inside section 3, so the compound authority and load order remain unchanged.
 
 The topology is not serialized. On load the sequence is:
 
@@ -94,7 +96,7 @@ require component clocks == checkpoint global day
 expose SimulationState
 ```
 
-Component loaders retain their own wrong-world, malformed-state, capacity, ownership and trailing-data checks.
+Component loaders retain their own wrong-world, malformed-state, capacity, ownership and trailing-data checks. The v0.11 water loader additionally validates channel shape/values and supports v2 → zero-channel migration.
 
 FNV-1a is used for accidental-corruption detection only. It is not a cryptographic authenticity mechanism and checkpoints must not be treated as secure against a maliciously constructed file.
 
@@ -114,7 +116,7 @@ It:
 
 Failures before the final publication leave the previous target untouched.
 
-This is a validated atomic replacement contract. v0.10 does **not** claim full power-loss durability of the POSIX directory entry because the parent directory is not explicitly fsynced after rename.
+This is a validated atomic replacement contract. WorldSim does **not** claim full power-loss durability of the POSIX directory entry because the parent directory is not explicitly fsynced after rename.
 
 ## C ABI
 
@@ -126,13 +128,14 @@ The handle owns the complete unified state. It does not hand out mutable compone
 - global-day/L0/refined/L2 counts;
 - regional and weather sampling;
 - coarse/refined water copies;
+- v0.11 read-only per-L0 and total channel-storage queries;
 - one-day advance;
 - refinement and aggregation commands;
 - persistent surface disturbance;
 - compound checkpoint save/load;
 - a simulation-specific thread-local error string.
 
-Existing standalone World/weather/water C APIs remain source-compatible.
+Existing standalone World/weather/water C APIs remain source-compatible. v0.11 adds functions but changes no existing C POD layouts or signatures.
 
 ## CLI migration and resume
 
@@ -154,42 +157,44 @@ A zero-day run is accepted when an existing World save only needs to be migrated
 
 ## Regression coverage
 
-The v0.10 tests cover:
+The simulation/checkpoint tests cover:
 
 - exact global weather/water clock alignment;
 - no accidental L2 materialization from construction, sampling or daily stepping;
 - refined-water ownership through the unified command boundary;
 - persistent L2 disturbance ownership;
 - exact weather/coarse/refined round-trip state;
-- byte-for-byte canonical reserialization of identical state;
-- exact deterministic next-day evolution after reload;
+- exact v0.11 channel state through standalone and compound persistence;
+- byte-for-byte canonical reserialization of identical state on the same build/platform;
+- exact deterministic next-day evolution after reload, including channel storage;
 - replacement of an existing checkpoint;
 - checksum corruption, truncation and global/component clock mismatch rejection;
 - migration of pre-v0.10 World L2 history;
-- the opaque C ABI including error behavior and future equivalence;
+- the opaque C ABI including error behavior and channel/future equivalence;
 - CLI `demo → simulation-run → simulation-resume` wiring on every CTest platform.
 
 CI runs GCC and Clang with warnings-as-errors, ASan/UBSan, and the complete shared-library consumer suite on MSVC/Windows.
 
 ## Europe-scale checkpoint observation
 
-The GCC Release CI benchmark uses the same 449,208-L0-cell Europe-scale fixture as the existing water/weather benchmarks, with 64 refined water parents and persistent L2 history.
+The GCC Release CI benchmark uses the same 449,208-L0-cell Europe-scale fixture as the water/weather benchmarks, with 64 refined water parents and persistent L2 history.
 
-One v0.10 CI observation measured approximately:
+One v0.11 CI observation measured approximately:
 
-- unified simulation construction: `818 ms`;
-- materialize 64 refined parents: `13.8 ms`;
-- five unified days: `821 ms`;
-- compound checkpoint save: `163 ms`;
-- compound checkpoint load including topology reconstruction: `919 ms`;
-- checkpoint size: `18,175,376 bytes` (`~17.33 MiB`);
-- peak RSS during the benchmark: `229,872 KiB`;
-- maximum relative water-balance residual: `5.895e-9`.
+- unified simulation construction: `815.272 ms`;
+- materialize 64 refined parents: `14.048 ms`;
+- five unified days: `776.130 ms`;
+- compound checkpoint save: `170.951 ms`;
+- compound checkpoint load including topology reconstruction: `939.440 ms`;
+- checkpoint size: `21,769,048 bytes` (`~20.76 MiB`);
+- persistent channel storage after five warmup days: `85,772,959,568.875 m³`;
+- peak RSS during the benchmark: `238,800 KiB`;
+- maximum relative water-balance residual: `5.886e-9`.
 
-The benchmark also requires exact next-day equivalence between the original and reloaded simulations. These values are environment-specific observations, not performance guarantees.
+The benchmark requires exact channel equality across every L0 cell after reload and after one deterministic future day. These values are environment-specific observations, not performance guarantees.
 
 ## Format portability
 
-The compound container and its component sections currently encode scalar fields through the project's existing native-POD binary persistence. Cross-endian or arbitrary cross-ABI file portability is not a v0.10 guarantee.
+The compound container and its component sections currently encode scalar fields through the project's existing native-POD binary persistence. Cross-endian or arbitrary cross-ABI file portability is not a guarantee.
 
 Changing that contract should be a deliberate persistence-format migration rather than an incidental change to the unified owner.

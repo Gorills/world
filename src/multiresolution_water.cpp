@@ -17,11 +17,18 @@ namespace {
 
 constexpr double kSecondsPerDay = 86'400.0;
 constexpr double kMaxWaterDepthMm = 1.0e30;
+// Fixed one-day e-folding linear reservoir. Newly arriving water cannot be released
+// until the following daily step, so no volume can traverse more than one L0 edge/day.
+constexpr double kChannelReleaseFractionPerDay = 0.6321205588285577;
 constexpr std::uint32_t kNoDownstream = 0xFFFFFFFFu;
 constexpr std::size_t kNoIndex = std::numeric_limits<std::size_t>::max();
 
 bool finite_non_negative(float value) {
     return std::isfinite(value) && value >= 0.0f;
+}
+
+bool finite_non_negative(double value) {
+    return std::isfinite(value) && value >= 0.0;
 }
 
 bool same_bounds(const WorldBounds& a, const WorldBounds& b) {
@@ -81,6 +88,14 @@ void require_valid_storage(const DynamicHydrologyCellState& c) {
         !std::isfinite(stored_depth_mm(c)) || stored_depth_mm(c) > kMaxWaterDepthMm) {
         throw std::invalid_argument("refined multiresolution water storage is invalid");
     }
+}
+
+void add_channel_volume(double& target, double volume, const char* message) {
+    if (!finite_non_negative(target) || !finite_non_negative(volume) ||
+        target > std::numeric_limits<double>::max() - volume) {
+        throw std::overflow_error(message);
+    }
+    target += volume;
 }
 
 std::size_t local_index(const HydrologyResult& h, CellCoord c) {
@@ -280,6 +295,16 @@ const RefinedWaterTileState& MultiresolutionWaterState::refined_tile(CellCoord c
     return it->second.state;
 }
 
+double MultiresolutionWaterState::channel_storage_m3(CellCoord climate_coord) const {
+    return channel_storage_m3_.at(coarse_.index_of(climate_coord));
+}
+
+double MultiresolutionWaterState::total_channel_storage_m3() const noexcept {
+    double total = 0.0;
+    for (const double volume : channel_storage_m3_) total += volume;
+    return total;
+}
+
 ContinentalWaterCellState& MultiresolutionWaterState::coarse_cell_mutable(std::size_t index) noexcept {
     return coarse_.cells_[index];
 }
@@ -310,6 +335,9 @@ void MultiresolutionWaterState::set_simulated_day(std::int64_t day) noexcept {
 }
 
 double MultiresolutionWaterState::total_storage_m3(const World& world) const {
+    if (channel_storage_m3_.size() != coarse_.cells_.size()) {
+        throw std::logic_error("multiresolution channel storage shape is inconsistent");
+    }
     double total = coarse_.total_storage_m3();
     std::vector<const RefinedTile*> ordered;
     ordered.reserve(refined_.size());
@@ -326,8 +354,20 @@ double MultiresolutionWaterState::total_storage_m3(const World& world) const {
             if (!cell.active || tile->topology.hydrology.cells[i].ocean) continue;
             const double area = overlap_area_m2(
                 cell.coord, world.config().regional_cell_m, world.config().bounds);
-            total += depth_to_volume(stored_depth_mm(cell), area);
+            const double volume = depth_to_volume(stored_depth_mm(cell), area);
+            if (!finite_non_negative(volume) || total > std::numeric_limits<double>::max() - volume) {
+                throw std::overflow_error("multiresolution terrestrial storage total overflow");
+            }
+            total += volume;
         }
+    }
+    for (std::size_t i = 0; i < channel_storage_m3_.size(); ++i) {
+        const double volume = channel_storage_m3_[i];
+        if (!finite_non_negative(volume) || (coarse_is_ocean(i) && volume != 0.0) ||
+            total > std::numeric_limits<double>::max() - volume) {
+            throw std::invalid_argument("multiresolution channel storage is invalid");
+        }
+        total += volume;
     }
     return total;
 }
@@ -340,6 +380,7 @@ MultiresolutionWaterState make_multiresolution_water_state(
     MultiresolutionWaterState state;
     state.coarse_ = make_continental_water_state(world, topology, parameters);
     state.parameters_ = parameters;
+    state.channel_storage_m3_.assign(state.coarse_.cells_.size(), 0.0);
     return state;
 }
 
@@ -495,6 +536,9 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
     if (forcing.size() != state.coarse_state().cells().size()) {
         throw std::invalid_argument("multiresolution forcing must contain exactly one record per L0 cell");
     }
+    if (state.channel_storage_m3_.size() != forcing.size()) {
+        throw std::logic_error("multiresolution channel storage shape is inconsistent");
+    }
 
     ContinentalWaterStepReport report;
     report.day_before = state.simulated_day();
@@ -511,6 +555,10 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
         if (!finite_non_negative(f.precipitation_mm) || !std::isfinite(f.mean_air_temperature_c) ||
             !finite_non_negative(f.potential_evapotranspiration_mm)) {
             throw std::invalid_argument("multiresolution water forcing contains invalid values");
+        }
+        const double channel = state.channel_storage_m3_[i];
+        if (!finite_non_negative(channel) || (state.coarse_is_ocean(i) && channel != 0.0)) {
+            throw std::invalid_argument("multiresolution channel storage is invalid");
         }
         if (state.coarse_is_ocean(i)) continue;
         coarse_soil_buckets[i] = detail::scaled_soil_bucket_parameters(
@@ -561,7 +609,8 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
     }
 
     std::vector<ContinentalWaterCellState> coarse_next = state.coarse_state().cells();
-    std::vector<double> routed(coarse_next.size(), 0.0);
+    std::vector<double> local_runoff(coarse_next.size(), 0.0);
+    std::vector<double> channel_next = state.channel_storage_m3_;
     std::unordered_map<CellCoord, std::vector<double>, CellCoordHash> ingress;
     ingress.reserve(state.refined_.size());
     for (const auto& entry : state.refined_) {
@@ -570,6 +619,8 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
     std::vector<PendingRefined> pending;
     pending.reserve(state.refined_.size());
 
+    // Terrestrial bucket physics runs first. Its runoff is new channel water and therefore
+    // cannot be released until a later day.
     for (std::size_t i = 0; i < coarse_next.size(); ++i) {
         const auto coord = state.coarse_state().coord_of(i);
         auto& c = coarse_next[i];
@@ -578,58 +629,35 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
         c.last_baseflow_mm = 0.0f;
         c.last_routed_discharge_m3_s = 0.0f;
         if (state.coarse_is_ocean(i) || state.is_refined(coord)) continue;
-        routed[i] = advance_coarse_bucket(
+        local_runoff[i] = advance_coarse_bucket(
             c, forcing[i], state.coarse_area_m2(i), state.parameters(), coarse_soil_buckets[i], report);
     }
 
+    // Release only the channel storage that existed at the beginning of this day. Every
+    // released parcel crosses at most one L0 edge. A release entering a refined parent may
+    // traverse that parent's internal L1 graph, but its tile outlet returns to the parent's
+    // next channel store and cannot cross another L0 edge until the next day.
     for (const auto index32 : state.coarse_routing_order()) {
         const auto i = static_cast<std::size_t>(index32);
+        if (state.coarse_is_ocean(i)) continue;
         const auto coord = state.coarse_state().coord_of(i);
-        double volume = routed[i];
-
-        if (state.is_refined(coord)) {
-            const auto& owned = state.refined_.at(coord);
-            DynamicHydrologyTileState detailed;
-            detailed.config = owned.state.config;
-            detailed.climate_coord = coord;
-            detailed.simulated_days = 0.0;
-            detailed.cells = owned.state.cells;
-
-            std::vector<HydrometeorologicalForcing> detailed_forcing;
-            detailed_forcing.reserve(detailed.cells.size());
-            for (std::size_t j = 0; j < detailed.cells.size(); ++j) {
-                HydrometeorologicalForcing child_forcing;
-                child_forcing.coord = detailed.cells[j].coord;
-                if (detailed.cells[j].active && !owned.topology.hydrology.cells[j].ocean) {
-                    child_forcing.precipitation_mm = forcing[i].precipitation_mm;
-                    child_forcing.mean_air_temperature_c = forcing[i].mean_air_temperature_c;
-                    child_forcing.potential_evapotranspiration_mm = forcing[i].potential_evapotranspiration_mm;
-                }
-                detailed_forcing.push_back(child_forcing);
-            }
-
-            std::vector<ExternalHydrologyInflow> external;
-            const auto& by_cell = ingress.at(coord);
-            for (std::size_t j = 0; j < by_cell.size(); ++j) {
-                if (by_cell[j] > 0.0) external.push_back({detailed.cells[j].coord, by_cell[j]});
-            }
-            const auto detailed_report = advance_dynamic_hydrology_tile(
-                world, owned.topology, detailed, detailed_forcing, external, 1.0, state.parameters());
-            report.precipitation_m3 += detailed_report.precipitation_m3;
-            report.evapotranspiration_m3 += detailed_report.evapotranspiration_m3;
-            volume = detailed_report.external_outflow_m3;
-            pending.push_back({coord, std::move(detailed.cells)});
-        } else if (!state.coarse_is_ocean(i)) {
-            coarse_next[i].last_routed_discharge_m3_s = static_cast<float>(volume / kSecondsPerDay);
-        }
+        const double old_channel = state.channel_storage_m3_[i];
+        const double release = old_channel * kChannelReleaseFractionPerDay;
+        channel_next[i] -= release;
+        coarse_next[i].last_routed_discharge_m3_s = static_cast<float>(release / kSecondsPerDay);
+        if (release == 0.0) continue;
 
         const auto downstream = state.coarse_downstream_index(i);
         if (downstream == kNoDownstream) {
-            report.terminal_outflow_m3 += volume;
+            add_channel_volume(report.terminal_outflow_m3, release, "terminal channel outflow overflow");
+            continue;
+        }
+        const auto downstream_index = static_cast<std::size_t>(downstream);
+        if (state.coarse_is_ocean(downstream_index)) {
+            add_channel_volume(report.terminal_outflow_m3, release, "terminal channel outflow overflow");
             continue;
         }
 
-        const auto downstream_index = static_cast<std::size_t>(downstream);
         const auto downstream_coord = state.coarse_state().coord_of(downstream_index);
         if (state.is_refined(downstream_coord)) {
             const auto edge = choose_tile_connection(world, coord, downstream_coord);
@@ -640,22 +668,78 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
                 throw std::logic_error("refined ingress targets an inactive child cell");
             }
             auto& target = ingress.at(downstream_coord)[child_index];
-            if (!std::isfinite(volume) || target > std::numeric_limits<double>::max() - volume) {
-                throw std::overflow_error("refined ingress volume overflow");
-            }
-            target += volume;
+            add_channel_volume(target, release, "refined channel ingress volume overflow");
         } else {
-            if (!std::isfinite(volume) || routed[downstream_index] > std::numeric_limits<double>::max() - volume) {
-                throw std::overflow_error("coarse routed volume overflow");
-            }
-            routed[downstream_index] += volume;
+            add_channel_volume(
+                channel_next[downstream_index], release, "downstream channel storage overflow");
         }
+    }
+
+    // Current-day coarse runoff enters its own L0 channel after the release phase.
+    for (std::size_t i = 0; i < local_runoff.size(); ++i) {
+        if (local_runoff[i] > 0.0) {
+            add_channel_volume(channel_next[i], local_runoff[i], "local channel storage overflow");
+        }
+    }
+
+    // Refined parents receive current weather and any one-edge upstream channel releases.
+    // Their detailed external outflow becomes new parent L0 channel storage.
+    std::vector<const MultiresolutionWaterState::RefinedTile*> ordered_refined;
+    ordered_refined.reserve(state.refined_.size());
+    for (const auto& entry : state.refined_) ordered_refined.push_back(&entry.second);
+    std::sort(ordered_refined.begin(), ordered_refined.end(), [](const auto* a, const auto* b) {
+        if (a->state.climate_coord.y != b->state.climate_coord.y) {
+            return a->state.climate_coord.y < b->state.climate_coord.y;
+        }
+        return a->state.climate_coord.x < b->state.climate_coord.x;
+    });
+
+    for (const auto* owned_ptr : ordered_refined) {
+        const auto coord = owned_ptr->state.climate_coord;
+        const auto i = state.coarse_state().index_of(coord);
+        if (state.coarse_is_ocean(i)) continue;
+        const auto& owned = state.refined_.at(coord);
+        DynamicHydrologyTileState detailed;
+        detailed.config = owned.state.config;
+        detailed.climate_coord = coord;
+        detailed.simulated_days = 0.0;
+        detailed.cells = owned.state.cells;
+
+        std::vector<HydrometeorologicalForcing> detailed_forcing;
+        detailed_forcing.reserve(detailed.cells.size());
+        for (std::size_t j = 0; j < detailed.cells.size(); ++j) {
+            HydrometeorologicalForcing child_forcing;
+            child_forcing.coord = detailed.cells[j].coord;
+            if (detailed.cells[j].active && !owned.topology.hydrology.cells[j].ocean) {
+                child_forcing.precipitation_mm = forcing[i].precipitation_mm;
+                child_forcing.mean_air_temperature_c = forcing[i].mean_air_temperature_c;
+                child_forcing.potential_evapotranspiration_mm = forcing[i].potential_evapotranspiration_mm;
+            }
+            detailed_forcing.push_back(child_forcing);
+        }
+
+        std::vector<ExternalHydrologyInflow> external;
+        const auto& by_cell = ingress.at(coord);
+        for (std::size_t j = 0; j < by_cell.size(); ++j) {
+            if (by_cell[j] > 0.0) external.push_back({detailed.cells[j].coord, by_cell[j]});
+        }
+        const auto detailed_report = advance_dynamic_hydrology_tile(
+            world, owned.topology, detailed, detailed_forcing, external, 1.0, state.parameters());
+        report.precipitation_m3 += detailed_report.precipitation_m3;
+        report.evapotranspiration_m3 += detailed_report.evapotranspiration_m3;
+        add_channel_volume(
+            channel_next[i], detailed_report.external_outflow_m3, "refined outlet channel storage overflow");
+        pending.push_back({coord, std::move(detailed.cells)});
     }
 
     double storage_after = 0.0;
     for (std::size_t i = 0; i < coarse_next.size(); ++i) {
         if (state.coarse_is_ocean(i)) continue;
-        storage_after += depth_to_volume(stored_depth_mm(coarse_next[i]), state.coarse_area_m2(i));
+        const double volume = depth_to_volume(stored_depth_mm(coarse_next[i]), state.coarse_area_m2(i));
+        if (!finite_non_negative(volume) || storage_after > std::numeric_limits<double>::max() - volume) {
+            throw std::overflow_error("coarse storage total overflow");
+        }
+        storage_after += volume;
     }
     for (const auto& next : pending) {
         const auto& topology = state.refined_.at(next.climate_coord).topology;
@@ -664,8 +748,20 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
             if (!cell.active || topology.hydrology.cells[j].ocean) continue;
             const double area = overlap_area_m2(
                 cell.coord, world.config().regional_cell_m, world.config().bounds);
-            storage_after += depth_to_volume(stored_depth_mm(cell), area);
+            const double volume = depth_to_volume(stored_depth_mm(cell), area);
+            if (!finite_non_negative(volume) || storage_after > std::numeric_limits<double>::max() - volume) {
+                throw std::overflow_error("refined storage total overflow");
+            }
+            storage_after += volume;
         }
+    }
+    for (std::size_t i = 0; i < channel_next.size(); ++i) {
+        const double volume = channel_next[i];
+        if (!finite_non_negative(volume) || (state.coarse_is_ocean(i) && volume != 0.0) ||
+            storage_after > std::numeric_limits<double>::max() - volume) {
+            throw std::overflow_error("channel storage total overflow");
+        }
+        storage_after += volume;
     }
     report.storage_after_m3 = storage_after;
     report.water_balance_error_m3 = report.storage_before_m3 + report.precipitation_m3 -
@@ -674,6 +770,7 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
     for (std::size_t i = 0; i < coarse_next.size(); ++i) {
         state.coarse_cell_mutable(i) = coarse_next[i];
     }
+    state.channel_storage_m3_ = std::move(channel_next);
     for (auto& next : pending) {
         auto& owned = state.refined_.at(next.climate_coord);
         owned.state.cells = std::move(next.cells);

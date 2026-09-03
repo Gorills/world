@@ -293,7 +293,7 @@ int main() {
                       invalid_coarse_before.size() * sizeof(ContinentalWaterCellState)) == 0,
           "L0 step rejects locally over-capacity soil state before mutation");
 
-    const auto path = std::filesystem::temp_directory_path() / "worldsim_soil_capacity_v2.wsmw";
+    const auto path = std::filesystem::temp_directory_path() / "worldsim_soil_capacity_v3.wsmw";
     save_multiresolution_water_state(mixed, path);
     std::uint32_t version = 0;
     {
@@ -301,7 +301,7 @@ int main() {
         in.seekg(8, std::ios::beg);
         in.read(reinterpret_cast<char*>(&version), sizeof(version));
     }
-    check(version == 2u, "capacity-aware multiresolution persistence writes format v2");
+    check(version == 3u, "capacity-aware multiresolution persistence writes format v3");
     {
         std::fstream io(path, std::ios::binary | std::ios::in | std::ios::out);
         const std::uint32_t legacy = 1u;

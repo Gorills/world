@@ -197,6 +197,26 @@ int ws_simulation_is_refined(
     return state->impl.water().is_refined({climate_x, climate_y}) ? 1 : 0;
 }
 
+int ws_simulation_channel_storage_m3(
+    const ws_simulation_state* state,
+    int64_t climate_x,
+    int64_t climate_y,
+    double* out_volume_m3) {
+    return guarded([&] {
+        if (!state || !out_volume_m3) throw std::invalid_argument("state/out_volume_m3 is null");
+        *out_volume_m3 = state->impl.water().channel_storage_m3({climate_x, climate_y});
+    });
+}
+
+int ws_simulation_total_channel_storage_m3(
+    const ws_simulation_state* state,
+    double* out_volume_m3) {
+    return guarded([&] {
+        if (!state || !out_volume_m3) throw std::invalid_argument("state/out_volume_m3 is null");
+        *out_volume_m3 = state->impl.water().total_channel_storage_m3();
+    });
+}
+
 int ws_simulation_sample_region(
     const ws_simulation_state* state,
     double x_m,
