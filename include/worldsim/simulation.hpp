@@ -20,6 +20,14 @@ public:
         const WeatherParameters& weather_parameters = {},
         const DynamicHydrologyParameters& water_parameters = {});
 
+    // Migration path for pre-v0.10 World saves. Existing persistent L2 history becomes the
+    // World authority of a new day-zero unified simulation; weather and water start from the
+    // deterministic initial state derived from that exact World.
+    [[nodiscard]] static SimulationState from_world(
+        World world,
+        const WeatherParameters& weather_parameters = {},
+        const DynamicHydrologyParameters& water_parameters = {});
+
     [[nodiscard]] std::int64_t simulated_day() const noexcept { return weather_.simulated_day(); }
     [[nodiscard]] const World& world() const noexcept { return world_; }
     [[nodiscard]] const ContinentalHydrologyResult& topology() const noexcept { return topology_; }
