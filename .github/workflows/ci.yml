@@ -64,5 +64,8 @@ jobs:
         run: cmake -S . -B build -DBUILD_SHARED_LIBS=ON '-DCMAKE_C_FLAGS=/WX' '-DCMAKE_CXX_FLAGS=/WX /EHsc'
       - name: Build
         run: cmake --build build --config Release
+      - name: Prepare legacy C test temp root
+        shell: pwsh
+        run: New-Item -ItemType Directory -Force /tmp | Out-Null
       - name: Test shared library consumers
         run: ctest --test-dir build -C Release --output-on-failure
