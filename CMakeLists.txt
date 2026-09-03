@@ -13,6 +13,7 @@ add_library(worldsim
     src/multiresolution_water_persistence.cpp
     src/persistence.cpp
     src/c_api.cpp
+    src/multiresolution_water_c_api.cpp
 )
 add_library(worldsim::worldsim ALIAS worldsim)
 
@@ -57,4 +58,11 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_c_api_tests PRIVATE worldsim::worldsim)
     set_target_properties(worldsim_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
     add_test(NAME worldsim_c_api_tests COMMAND worldsim_c_api_tests)
+
+    add_executable(worldsim_multiresolution_water_c_api_tests
+        tests/test_multiresolution_water_c_api.c)
+    target_link_libraries(worldsim_multiresolution_water_c_api_tests PRIVATE worldsim::worldsim)
+    set_target_properties(worldsim_multiresolution_water_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
+    add_test(NAME worldsim_multiresolution_water_c_api_tests
+        COMMAND worldsim_multiresolution_water_c_api_tests)
 endif()
