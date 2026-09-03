@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <unordered_map>
 #include <vector>
 
@@ -54,6 +55,10 @@ private:
     friend void aggregate_refined_water_tile(const World&, MultiresolutionWaterState&, CellCoord);
     friend ContinentalWaterStepReport advance_multiresolution_water_day(
         const World&, MultiresolutionWaterState&, const std::vector<ContinentalWaterForcing>&);
+    friend void save_multiresolution_water_state(
+        const MultiresolutionWaterState&, const std::filesystem::path&);
+    friend MultiresolutionWaterState load_multiresolution_water_state(
+        const World&, const ContinentalHydrologyResult&, const std::filesystem::path&);
 };
 
 [[nodiscard]] MultiresolutionWaterState make_multiresolution_water_state(
@@ -76,5 +81,16 @@ void aggregate_refined_water_tile(
     const World& world,
     MultiresolutionWaterState& state,
     const std::vector<ContinentalWaterForcing>& forcing);
+
+// Dynamic water remains an explicit simulation state rather than becoming implicit World state.
+// This versioned file persists its exact global day, coarse stores and sparse refined ownership.
+void save_multiresolution_water_state(
+    const MultiresolutionWaterState& state,
+    const std::filesystem::path& path);
+
+[[nodiscard]] MultiresolutionWaterState load_multiresolution_water_state(
+    const World& world,
+    const ContinentalHydrologyResult& topology,
+    const std::filesystem::path& path);
 
 } // namespace worldsim
