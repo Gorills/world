@@ -444,6 +444,7 @@ MultiresolutionWaterState load_multiresolution_water_state(
         throw std::runtime_error("multiresolution water file contains unexpected trailing data");
     }
     if (!in.eof()) throw std::runtime_error("failed while validating multiresolution water file end");
+    (void)state.total_storage_m3(world);
     return state;
 }
 
