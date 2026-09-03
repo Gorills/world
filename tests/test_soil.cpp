@@ -49,7 +49,7 @@ int main() {
         auto candidate = world.refine_authoritative_hydrology_tile(topology, coarse.coord);
         std::size_t active = 0;
         for (const auto& child : candidate.hydrology.cells) active += child.active ? 1U : 0U;
-        if (active >= 2) {
+        if (active >= 2 && active < 64) {
             parent = coarse.coord;
             tile = std::move(candidate);
             found = true;
@@ -57,7 +57,7 @@ int main() {
         }
     }
     if (!found) {
-        std::cerr << "FAIL: soil fixture has no parent with multiple active L1 cells\n";
+        std::cerr << "FAIL: soil fixture has no partial parent with multiple active L1 cells\n";
         return 1;
     }
 
