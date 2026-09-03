@@ -16,7 +16,7 @@ static void check(int condition, const char* message) {
 }
 
 int main(void) {
-    const char* save_path = "/tmp/worldsim_weather_c_api.bin";
+    const char* save_path = "worldsim_weather_c_api.bin";
     ws_world_config cfg;
     memset(&cfg, 0, sizeof(cfg));
     cfg.seed = 1301;
