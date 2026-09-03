@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -264,6 +265,33 @@ int main() {
               invalid_detailed.cells[invalid_index].soil_water_mm == invalid_before,
               "L1 step rejects over-capacity soil state before mutation");
     }
+
+    DynamicHydrologyParameters high_capacity;
+    high_capacity.soil_capacity_mm = 200.0f;
+    high_capacity.field_capacity_mm = 120.0f;
+    high_capacity.wilting_point_mm = 20.0f;
+    high_capacity.initial_soil_water_mm = 100.0f;
+    high_capacity.initial_groundwater_mm = 0.0f;
+    auto invalid_coarse = make_continental_water_state(world, topology, high_capacity);
+    const auto invalid_coarse_before = invalid_coarse.cells();
+    DynamicHydrologyParameters low_capacity = high_capacity;
+    low_capacity.soil_capacity_mm = 50.0f;
+    low_capacity.field_capacity_mm = 30.0f;
+    low_capacity.wilting_point_mm = 5.0f;
+    low_capacity.initial_soil_water_mm = 0.0f;
+    std::vector<ContinentalWaterForcing> zero_coarse_forcing(topology.cells.size());
+    bool invalid_coarse_rejected = false;
+    try {
+        (void)advance_continental_water_day(
+            invalid_coarse, zero_coarse_forcing, low_capacity);
+    } catch (const std::invalid_argument&) {
+        invalid_coarse_rejected = true;
+    }
+    check(invalid_coarse_rejected && invalid_coarse.simulated_day() == 0 &&
+          invalid_coarse_before.size() == invalid_coarse.cells().size() &&
+          std::memcmp(invalid_coarse_before.data(), invalid_coarse.cells().data(),
+                      invalid_coarse_before.size() * sizeof(ContinentalWaterCellState)) == 0,
+          "L0 step rejects locally over-capacity soil state before mutation");
 
     const auto path = std::filesystem::temp_directory_path() / "worldsim_soil_capacity_v2.wsmw";
     save_multiresolution_water_state(mixed, path);
