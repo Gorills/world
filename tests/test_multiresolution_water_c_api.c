@@ -90,6 +90,15 @@ int main(void) {
     }
     check(ws_multiresolution_water_simulated_day(state) == 0,
           "C ABI multiresolution clock starts at zero");
+    double initial_parent_channel = -1.0;
+    double initial_total_channel = -1.0;
+    check(ws_multiresolution_water_channel_storage_m3(
+              state, parent_x, parent_y, &initial_parent_channel) == 0 &&
+          initial_parent_channel == 0.0,
+          "C ABI channel query starts at zero for one L0 cell");
+    check(ws_multiresolution_water_total_channel_storage_m3(state, &initial_total_channel) == 0 &&
+          initial_total_channel == 0.0,
+          "C ABI total channel storage starts at zero");
     check(ws_multiresolution_water_materialize(world, topology, state, parent_x, parent_y) == 0,
           "C ABI materializes refined water ownership");
     check(ws_multiresolution_water_refined_tile_count(state) == 1,
@@ -145,6 +154,16 @@ int main(void) {
     check(isfinite(report.water_balance_error_m3),
           "C ABI reports finite coupled water balance");
 
+    double parent_channel_before_save = -1.0;
+    double total_channel_before_save = -1.0;
+    check(ws_multiresolution_water_channel_storage_m3(
+              state, parent_x, parent_y, &parent_channel_before_save) == 0 &&
+          parent_channel_before_save >= 0.0,
+          "C ABI exposes finite parent channel storage after stepping");
+    check(ws_multiresolution_water_total_channel_storage_m3(state, &total_channel_before_save) == 0 &&
+          total_channel_before_save > 0.0,
+          "C ABI exposes nonzero conserved channel storage after stepping");
+
     check(ws_multiresolution_water_save(state, save_path) == 0,
           "C ABI saves authoritative multiresolution ownership");
     ws_multiresolution_water_state* loaded =
@@ -155,11 +174,25 @@ int main(void) {
               ws_multiresolution_water_refined_tile_count(loaded) == 1 &&
               ws_multiresolution_water_is_refined(loaded, parent_x, parent_y) == 1,
               "C ABI reload preserves clock and refined ownership");
+        double loaded_parent_channel = -1.0;
+        double loaded_total_channel = -1.0;
+        check(ws_multiresolution_water_channel_storage_m3(
+                  loaded, parent_x, parent_y, &loaded_parent_channel) == 0 &&
+              loaded_parent_channel == parent_channel_before_save,
+              "C ABI reload preserves exact parent channel storage");
+        check(ws_multiresolution_water_total_channel_storage_m3(loaded, &loaded_total_channel) == 0 &&
+              loaded_total_channel == total_channel_before_save,
+              "C ABI reload preserves exact total channel storage");
         check(ws_multiresolution_water_aggregate(world, loaded, parent_x, parent_y) == 0,
               "C ABI aggregates refined water back into L0");
         check(ws_multiresolution_water_refined_tile_count(loaded) == 0 &&
               ws_multiresolution_water_is_refined(loaded, parent_x, parent_y) == 0,
               "C ABI releases refined ownership after aggregation");
+        double aggregated_parent_channel = -1.0;
+        check(ws_multiresolution_water_channel_storage_m3(
+                  loaded, parent_x, parent_y, &aggregated_parent_channel) == 0 &&
+              aggregated_parent_channel == loaded_parent_channel,
+              "C ABI aggregation leaves L0 channel ownership unchanged");
         memset(coarse, 0, (size_t)count * sizeof(*coarse));
         check(ws_multiresolution_water_copy_coarse_cells(loaded, coarse, count) == 0,
               "C ABI copies aggregated L0 state");
@@ -174,6 +207,9 @@ int main(void) {
     check(ws_multiresolution_water_materialize(
               world, topology, state, INT64_MAX, INT64_MAX) == -1,
           "C ABI rejects a parent coordinate outside the topology");
+    check(ws_multiresolution_water_channel_storage_m3(
+              state, INT64_MAX, INT64_MAX, &initial_parent_channel) == -1,
+          "C ABI channel query rejects a coordinate outside the L0 raster");
     check(ws_multiresolution_water_refined_tile_count(state) == 1,
           "invalid C ABI materialization leaves ownership unchanged");
 
