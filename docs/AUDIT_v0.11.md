@@ -215,4 +215,4 @@ This changes the most important remaining simplification in v0.11 without reopen
 
 v0.11 closes the strongest hydrologic omission selected by the v0.10 audit. Channel water is now explicit conserved state, has finite daily travel time, respects refined boundaries, participates in whole-world mass balance, survives standalone and compound persistence, and is observable through additive ABI queries.
 
-The CI-discovered downstream-arrival overwrite was fixed at the scheduler cause rather than hidden by tolerance changes. No release-blocking ownership, conservation, persistence or ABI defect is known in the audited v0.11 scope; the final release head must still pass the complete CI matrix after release metadata/documentation commits before merge.
+The CI-discovered downstream-arrival overwrite was fixed at the scheduler cause rather than hidden by tolerance changes. No release-blocking ownership, conservation, persistence or ABI defect is known in the audited v0.11 scope. Merge is gated on the complete permanent CI matrix for the exact final release head.
