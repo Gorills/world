@@ -83,6 +83,17 @@ bool same_refined_tile(
     }
     return true;
 }
+
+bool same_channels(
+    const worldsim::ContinentalHydrologyResult& topology,
+    const worldsim::MultiresolutionWaterState& a,
+    const worldsim::MultiresolutionWaterState& b) {
+    if (a.total_channel_storage_m3() != b.total_channel_storage_m3()) return false;
+    for (const auto& cell : topology.cells) {
+        if (a.channel_storage_m3(cell.coord) != b.channel_storage_m3(cell.coord)) return false;
+    }
+    return true;
+}
 } // namespace
 
 int main() {
@@ -154,6 +165,10 @@ int main() {
     if (max_relative_balance_error > 1.0e-6) {
         throw std::runtime_error("simulation Europe water balance exceeds tolerance");
     }
+    const double warmup_channel_storage_m3 = simulation.water().total_channel_storage_m3();
+    if (!(warmup_channel_storage_m3 > 0.0) || !std::isfinite(warmup_channel_storage_m3)) {
+        throw std::runtime_error("simulation Europe fixture did not exercise persistent channel storage");
+    }
 
     const auto checkpoint = std::filesystem::temp_directory_path() /
         "worldsim_europe_simulation_checkpoint.bin";
@@ -175,7 +190,8 @@ int main() {
         throw std::runtime_error("simulation benchmark checkpoint ownership metadata did not round-trip");
     }
     if (!same_weather_cell(simulation.weather(), loaded.weather(), refined_parents.front()) ||
-        !same_refined_tile(simulation.water(), loaded.water(), refined_parents.front())) {
+        !same_refined_tile(simulation.water(), loaded.water(), refined_parents.front()) ||
+        !same_channels(simulation.topology(), simulation.water(), loaded.water())) {
         throw std::runtime_error("simulation benchmark checkpoint state did not round-trip exactly");
     }
 
@@ -185,7 +201,8 @@ int main() {
     const auto future_end = Clock::now();
     if (!same_report(future_a, future_b) ||
         !same_weather_cell(simulation.weather(), loaded.weather(), refined_parents.front()) ||
-        !same_refined_tile(simulation.water(), loaded.water(), refined_parents.front())) {
+        !same_refined_tile(simulation.water(), loaded.water(), refined_parents.front()) ||
+        !same_channels(simulation.topology(), simulation.water(), loaded.water())) {
         throw std::runtime_error("simulation benchmark checkpoint changed deterministic future evolution");
     }
 
@@ -202,6 +219,7 @@ int main() {
               << "checkpoint_load_ms=" << elapsed_ms(load_begin, load_end) << '\n'
               << "future_pair_ms=" << elapsed_ms(future_begin, future_end) << '\n'
               << "checkpoint_bytes=" << checkpoint_bytes << '\n'
+              << "warmup_channel_storage_m3=" << warmup_channel_storage_m3 << '\n'
               << "peak_rss_kib=" << peak_rss_kib() << '\n'
               << std::scientific
               << "max_relative_water_balance_error=" << max_relative_balance_error << '\n';
