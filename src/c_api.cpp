@@ -1,6 +1,7 @@
 #include "worldsim/c_api.h"
 #include "worldsim/world.hpp"
 #include "worldsim/dynamic_hydrology.hpp"
+#include "worldsim/continental_water.hpp"
 
 #include <exception>
 #include <memory>
@@ -25,6 +26,13 @@ struct ws_continental_hydrology_result {
     worldsim::ContinentalHydrologyResult impl;
 };
 
+struct ws_continental_water_state {
+    ws_continental_water_state(worldsim::ContinentalWaterState value,
+                               worldsim::DynamicHydrologyParameters params)
+        : impl(std::move(value)), parameters(params) {}
+    worldsim::ContinentalWaterState impl;
+    worldsim::DynamicHydrologyParameters parameters;
+};
 
 struct ws_dynamic_hydrology_state {
     ws_dynamic_hydrology_state(worldsim::AuthoritativeHydrologyTile topology,
@@ -211,6 +219,109 @@ ws_hydrology_result* ws_world_refine_authoritative_hydrology_tile(
         g_last_error = "unknown WorldSim error";
         return nullptr;
     }
+}
+
+ws_continental_water_state* ws_world_continental_water_create(
+    ws_world* world,
+    const ws_continental_hydrology_result* continent,
+    const ws_dynamic_hydrology_parameters* parameters) {
+    try {
+        if (!world || !continent) throw std::invalid_argument("world/continent is null");
+        auto params = dynamic_parameters_from_c(parameters);
+        auto state = worldsim::make_continental_water_state(world->impl, continent->impl, params);
+        auto out = std::make_unique<ws_continental_water_state>(std::move(state), params);
+        g_last_error.clear();
+        return out.release();
+    } catch (const std::exception& e) {
+        g_last_error = e.what();
+        return nullptr;
+    } catch (...) {
+        g_last_error = "unknown WorldSim error";
+        return nullptr;
+    }
+}
+
+void ws_continental_water_state_destroy(ws_continental_water_state* state) { delete state; }
+
+uint64_t ws_continental_water_cell_count(const ws_continental_water_state* state) {
+    return state ? static_cast<uint64_t>(state->impl.cells().size()) : 0;
+}
+
+int64_t ws_continental_water_simulated_day(const ws_continental_water_state* state) {
+    return state ? state->impl.simulated_day() : 0;
+}
+
+int ws_continental_water_copy_cells(
+    const ws_continental_water_state* state,
+    ws_continental_water_cell_state* out_cells,
+    uint64_t capacity) {
+    return guarded([&] {
+        if (!state || !out_cells) throw std::invalid_argument("state/out_cells is null");
+        if (capacity < state->impl.cells().size()) {
+            throw std::invalid_argument("continental water output capacity is too small");
+        }
+        for (std::size_t i = 0; i < state->impl.cells().size(); ++i) {
+            const auto coord = state->impl.coord_of(i);
+            const auto& in = state->impl.cells()[i];
+            auto& out = out_cells[i];
+            out.cell_x = coord.x;
+            out.cell_y = coord.y;
+            out.snow_water_equivalent_mm = in.snow_water_equivalent_mm;
+            out.surface_water_mm = in.surface_water_mm;
+            out.soil_water_mm = in.soil_water_mm;
+            out.groundwater_mm = in.groundwater_mm;
+            out.last_evapotranspiration_mm = in.last_evapotranspiration_mm;
+            out.last_quick_runoff_mm = in.last_quick_runoff_mm;
+            out.last_baseflow_mm = in.last_baseflow_mm;
+            out.last_routed_discharge_m3_s = in.last_routed_discharge_m3_s;
+        }
+    });
+}
+
+int ws_continental_water_make_smooth_daily_forcing(
+    const ws_continental_water_state* state,
+    ws_continental_water_forcing* out_forcing,
+    uint64_t capacity) {
+    return guarded([&] {
+        if (!state || !out_forcing) throw std::invalid_argument("state/out_forcing is null");
+        const auto forcing = worldsim::make_smooth_continental_daily_forcing(state->impl);
+        if (capacity < forcing.size()) throw std::invalid_argument("continental forcing output capacity is too small");
+        for (std::size_t i = 0; i < forcing.size(); ++i) {
+            out_forcing[i].precipitation_mm = forcing[i].precipitation_mm;
+            out_forcing[i].mean_air_temperature_c = forcing[i].mean_air_temperature_c;
+            out_forcing[i].potential_evapotranspiration_mm = forcing[i].potential_evapotranspiration_mm;
+        }
+    });
+}
+
+int ws_continental_water_advance_day(
+    ws_continental_water_state* state,
+    const ws_continental_water_forcing* forcing,
+    uint64_t forcing_count,
+    ws_continental_water_step_report* out_report) {
+    return guarded([&] {
+        if (!state || !forcing || !out_report) throw std::invalid_argument("state/forcing/out_report is null");
+        if (forcing_count != state->impl.cells().size()) {
+            throw std::invalid_argument("continental forcing count must equal state cell count");
+        }
+        std::vector<worldsim::ContinentalWaterForcing> cpp_forcing;
+        cpp_forcing.reserve(static_cast<std::size_t>(forcing_count));
+        for (uint64_t i = 0; i < forcing_count; ++i) {
+            cpp_forcing.push_back({forcing[i].precipitation_mm,
+                                   forcing[i].mean_air_temperature_c,
+                                   forcing[i].potential_evapotranspiration_mm});
+        }
+        const auto report = worldsim::advance_continental_water_day(
+            state->impl, cpp_forcing, state->parameters);
+        out_report->day_before = report.day_before;
+        out_report->day_after = report.day_after;
+        out_report->storage_before_m3 = report.storage_before_m3;
+        out_report->precipitation_m3 = report.precipitation_m3;
+        out_report->evapotranspiration_m3 = report.evapotranspiration_m3;
+        out_report->terminal_outflow_m3 = report.terminal_outflow_m3;
+        out_report->storage_after_m3 = report.storage_after_m3;
+        out_report->water_balance_error_m3 = report.water_balance_error_m3;
+    });
 }
 
 ws_dynamic_hydrology_state* ws_world_dynamic_hydrology_create(

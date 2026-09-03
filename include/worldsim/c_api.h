@@ -22,6 +22,7 @@ typedef struct ws_world ws_world;
 typedef struct ws_hydrology_result ws_hydrology_result;
 typedef struct ws_continental_hydrology_result ws_continental_hydrology_result;
 typedef struct ws_dynamic_hydrology_state ws_dynamic_hydrology_state;
+typedef struct ws_continental_water_state ws_continental_water_state;
 
 typedef struct ws_world_config {
     uint64_t seed;
@@ -48,7 +49,6 @@ typedef struct ws_local_cell {
     float forest_potential;
     float disturbance;
 } ws_local_cell;
-
 
 typedef struct ws_hydrology_request {
     int64_t min_region_x;
@@ -92,7 +92,6 @@ typedef struct ws_lake_info {
     float max_depth_m;
 } ws_lake_info;
 
-
 typedef struct ws_continental_hydrology_cell {
     int64_t cell_x;
     int64_t cell_y;
@@ -119,6 +118,35 @@ typedef struct ws_river_segment {
     float discharge_m3_s;
 } ws_river_segment;
 
+typedef struct ws_continental_water_forcing {
+    float precipitation_mm;
+    float mean_air_temperature_c;
+    float potential_evapotranspiration_mm;
+} ws_continental_water_forcing;
+
+typedef struct ws_continental_water_cell_state {
+    int64_t cell_x;
+    int64_t cell_y;
+    float snow_water_equivalent_mm;
+    float surface_water_mm;
+    float soil_water_mm;
+    float groundwater_mm;
+    float last_evapotranspiration_mm;
+    float last_quick_runoff_mm;
+    float last_baseflow_mm;
+    float last_routed_discharge_m3_s;
+} ws_continental_water_cell_state;
+
+typedef struct ws_continental_water_step_report {
+    int64_t day_before;
+    int64_t day_after;
+    double storage_before_m3;
+    double precipitation_m3;
+    double evapotranspiration_m3;
+    double terminal_outflow_m3;
+    double storage_after_m3;
+    double water_balance_error_m3;
+} ws_continental_water_step_report;
 
 typedef struct ws_dynamic_hydrology_parameters {
     float soil_capacity_mm;
@@ -185,7 +213,6 @@ WORLDSIM_API int ws_world_copy_local_patch(ws_world* world, int64_t region_x, in
                                             ws_local_cell* out_cells, uint64_t capacity);
 WORLDSIM_API uint64_t ws_world_materialized_patch_count(ws_world* world);
 
-
 WORLDSIM_API ws_continental_hydrology_result* ws_world_analyze_continental_hydrology(
     ws_world* world, float river_threshold_m3_s);
 WORLDSIM_API void ws_continental_hydrology_result_destroy(ws_continental_hydrology_result* result);
@@ -196,6 +223,21 @@ WORLDSIM_API ws_hydrology_result* ws_world_refine_authoritative_hydrology_tile(
     ws_world* world, const ws_continental_hydrology_result* continent,
     int64_t climate_x, int64_t climate_y, float river_threshold_m3_s, float lake_min_depth_m);
 
+WORLDSIM_API ws_continental_water_state* ws_world_continental_water_create(
+    ws_world* world, const ws_continental_hydrology_result* continent,
+    const ws_dynamic_hydrology_parameters* parameters);
+WORLDSIM_API void ws_continental_water_state_destroy(ws_continental_water_state* state);
+WORLDSIM_API uint64_t ws_continental_water_cell_count(const ws_continental_water_state* state);
+WORLDSIM_API int64_t ws_continental_water_simulated_day(const ws_continental_water_state* state);
+WORLDSIM_API int ws_continental_water_copy_cells(
+    const ws_continental_water_state* state, ws_continental_water_cell_state* out_cells, uint64_t capacity);
+WORLDSIM_API int ws_continental_water_make_smooth_daily_forcing(
+    const ws_continental_water_state* state,
+    ws_continental_water_forcing* out_forcing, uint64_t capacity);
+WORLDSIM_API int ws_continental_water_advance_day(
+    ws_continental_water_state* state,
+    const ws_continental_water_forcing* forcing, uint64_t forcing_count,
+    ws_continental_water_step_report* out_report);
 
 WORLDSIM_API ws_dynamic_hydrology_state* ws_world_dynamic_hydrology_create(
     ws_world* world, const ws_continental_hydrology_result* continent,

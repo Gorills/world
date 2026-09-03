@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.5.0
+
+### Added
+
+- Authoritative time-dependent water state for every L0 continental cell.
+- One exact integer global simulation day shared by the complete coarse world.
+- Coarse snow, surface-water, soil-water and groundwater stores.
+- Daily rain/snow partition, melt, infiltration, evapotranspiration, percolation, baseflow and quick runoff.
+- Deterministic routing of daily runoff/baseflow through the authoritative continental drainage DAG.
+- Whole-continent daily water-balance report.
+- Cached climate metadata for practical Europe-scale stepping.
+- C ABI continental-water state/forcing/advance/copy APIs.
+- CLI `continental-water` command.
+- Dedicated continental-water regression tests and `docs/CONTINENTAL_WATER.md`.
+- v0.4 architecture audit and GitHub Actions CI are retained as the merge baseline.
+
+### Fixed / hardened
+
+- Rejected continental forcing is fully validated before state mutation, making failed daily steps atomic.
+- Continental state/topology identity and routing DAG invariants are validated at construction.
+- Ocean atmospheric forcing is accepted and ignored by terrestrial accounting instead of forcing WeatherSystem callers to zero ocean precipitation.
+- Tests now verify actual topology/state coordinate alignment rather than a vacuous coverage assertion.
+- CLI version text updated to v0.5.
+
 ## 0.4.0
 
 ### Added

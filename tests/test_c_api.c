@@ -99,7 +99,6 @@ int main(void) {
     }
     ws_hydrology_result_destroy(hydrology);
 
-
     ws_continental_hydrology_result* continent = ws_world_analyze_continental_hydrology(world, 0.1f);
     if (!continent) {
         ws_world_destroy(world);
@@ -160,6 +159,69 @@ int main(void) {
         ws_world_destroy(world);
         return fail("authoritative tile external edge contract");
     }
+
+    ws_continental_water_state* continental_water = ws_world_continental_water_create(
+        world, continent, NULL);
+    if (!continental_water || ws_continental_water_cell_count(continental_water) != continent_count) {
+        ws_continental_water_state_destroy(continental_water);
+        ws_hydrology_result_destroy(tile);
+        free(ccells);
+        ws_continental_hydrology_result_destroy(continent);
+        ws_world_destroy(world);
+        return fail("create continental water state");
+    }
+    ws_continental_water_forcing* continental_forcing =
+        (ws_continental_water_forcing*)calloc((size_t)continent_count, sizeof(ws_continental_water_forcing));
+    ws_continental_water_cell_state* continental_water_cells =
+        (ws_continental_water_cell_state*)calloc((size_t)continent_count, sizeof(ws_continental_water_cell_state));
+    if (!continental_forcing || !continental_water_cells ||
+        ws_continental_water_make_smooth_daily_forcing(
+            continental_water, continental_forcing, continent_count) != 0) {
+        free(continental_forcing);
+        free(continental_water_cells);
+        ws_continental_water_state_destroy(continental_water);
+        ws_hydrology_result_destroy(tile);
+        free(ccells);
+        ws_continental_hydrology_result_destroy(continent);
+        ws_world_destroy(world);
+        return fail("make continental water forcing");
+    }
+    ws_continental_water_step_report continental_report = {0};
+    if (ws_continental_water_advance_day(
+            continental_water, continental_forcing, continent_count, &continental_report) != 0 ||
+        ws_continental_water_simulated_day(continental_water) != 1 ||
+        fabs(continental_report.water_balance_error_m3) >= 250.0 ||
+        ws_continental_water_copy_cells(
+            continental_water, continental_water_cells, continent_count) != 0) {
+        free(continental_forcing);
+        free(continental_water_cells);
+        ws_continental_water_state_destroy(continental_water);
+        ws_hydrology_result_destroy(tile);
+        free(ccells);
+        ws_continental_hydrology_result_destroy(continent);
+        ws_world_destroy(world);
+        return fail("advance/copy continental water state");
+    }
+
+    /* Rejected forcing must not partially advance the C ABI state either. */
+    const int64_t day_before_reject = ws_continental_water_simulated_day(continental_water);
+    continental_forcing[continent_count - 1].mean_air_temperature_c = (float)NAN;
+    ws_continental_water_step_report rejected_report = {0};
+    if (ws_continental_water_advance_day(
+            continental_water, continental_forcing, continent_count, &rejected_report) == 0 ||
+        ws_continental_water_simulated_day(continental_water) != day_before_reject) {
+        free(continental_forcing);
+        free(continental_water_cells);
+        ws_continental_water_state_destroy(continental_water);
+        ws_hydrology_result_destroy(tile);
+        free(ccells);
+        ws_continental_hydrology_result_destroy(continent);
+        ws_world_destroy(world);
+        return fail("continental water C ABI rejected-step atomicity");
+    }
+    free(continental_forcing);
+    free(continental_water_cells);
+    ws_continental_water_state_destroy(continental_water);
 
     ws_dynamic_hydrology_state* dynamic = ws_world_dynamic_hydrology_create(
         world, continent, ccells[refinable].cell_x, ccells[refinable].cell_y, NULL);

@@ -1,4 +1,5 @@
 #include "worldsim/world.hpp"
+#include "worldsim/continental_water.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -16,14 +17,15 @@ namespace {
 
 void usage() {
     std::cout <<
-        "WorldSim CLI v0.4\n"
+        "WorldSim CLI v0.5\n"
         "Usage:\n"
         "  worldsim_cli demo [save.ws]\n"
         "  worldsim_cli inspect <save.ws> <x_m> <y_m>\n"
         "  worldsim_cli hydrology <save.ws> <min_region_x> <min_region_y> <width> <height> [river_threshold_m3_s]\n"
         "  worldsim_cli continent <save.ws> [river_threshold_m3_s]\n"
         "  worldsim_cli tile <save.ws> <climate_x> <climate_y> [river_threshold_m3_s]\n"
-        "  worldsim_cli watercycle <save.ws> <climate_x> <climate_y> <days>\n";
+        "  worldsim_cli watercycle <save.ws> <climate_x> <climate_y> <days>\n"
+        "  worldsim_cli continental-water <save.ws> <days>\n";
 }
 
 void print_region(const worldsim::RegionalSample& s) {
@@ -60,7 +62,6 @@ void print_hydrology_summary(const worldsim::HydrologyResult& h) {
               << "max_accumulated_discharge_m3_s=" << max_discharge << "\n"
               << "max_depression_depth_m=" << max_depression << "\n";
 }
-
 
 void print_continental_summary(const worldsim::ContinentalHydrologyResult& h) {
     double total_yield = 0.0;
@@ -145,7 +146,6 @@ int main(int argc, char** argv) {
             return 0;
         }
 
-
         if (cmd == "continent" && (argc == 3 || argc == 4)) {
             auto world = worldsim::World::load(argv[2]);
             worldsim::ContinentalHydrologyRequest request;
@@ -165,6 +165,40 @@ int main(int argc, char** argv) {
             return 0;
         }
 
+        if (cmd == "continental-water" && argc == 4) {
+            auto world = worldsim::World::load(argv[2]);
+            const int days = std::stoi(argv[3]);
+            if (days <= 0 || days > 100'000) throw std::invalid_argument("days must be in [1, 100000]");
+            const auto continent = world.analyze_continental_hydrology();
+            auto water = worldsim::make_continental_water_state(world, continent);
+            double precipitation_m3 = 0.0;
+            double et_m3 = 0.0;
+            double outflow_m3 = 0.0;
+            double max_abs_balance_error_m3 = 0.0;
+            double initial_storage_m3 = 0.0;
+            double final_storage_m3 = 0.0;
+            for (int day = 0; day < days; ++day) {
+                const auto forcing = worldsim::make_smooth_continental_daily_forcing(water);
+                const auto report = worldsim::advance_continental_water_day(water, forcing);
+                if (day == 0) initial_storage_m3 = report.storage_before_m3;
+                final_storage_m3 = report.storage_after_m3;
+                precipitation_m3 += report.precipitation_m3;
+                et_m3 += report.evapotranspiration_m3;
+                outflow_m3 += report.terminal_outflow_m3;
+                max_abs_balance_error_m3 = std::max(
+                    max_abs_balance_error_m3, std::abs(report.water_balance_error_m3));
+            }
+            std::cout << std::fixed << std::setprecision(6)
+                      << "l0_cells=" << water.cells().size() << "\n"
+                      << "simulated_day=" << water.simulated_day() << "\n"
+                      << "precipitation_m3=" << precipitation_m3 << "\n"
+                      << "evapotranspiration_m3=" << et_m3 << "\n"
+                      << "terminal_outflow_m3=" << outflow_m3 << "\n"
+                      << "storage_initial_m3=" << initial_storage_m3 << "\n"
+                      << "storage_final_m3=" << final_storage_m3 << "\n"
+                      << "max_abs_daily_balance_error_m3=" << max_abs_balance_error_m3 << "\n";
+            return 0;
+        }
 
         if (cmd == "watercycle" && argc == 6) {
             auto world = worldsim::World::load(argv[2]);
