@@ -61,7 +61,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure shared MSVC build
-        run: cmake -S . -B build -DBUILD_SHARED_LIBS=ON -DCMAKE_C_FLAGS=/WX -DCMAKE_CXX_FLAGS=/WX
+        run: cmake -S . -B build -DBUILD_SHARED_LIBS=ON '-DCMAKE_C_FLAGS=/WX' '-DCMAKE_CXX_FLAGS=/WX /EHsc'
       - name: Build
         run: cmake --build build --config Release
       - name: Test shared library consumers
