@@ -6,10 +6,33 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { kTileCellCount = 64 };
+enum { kTileCellCount = WS_DYNAMIC_HYDROLOGY_TILE_CELL_COUNT };
 
 static int fail(const char* message) {
     fprintf(stderr, "FAIL: %s; api_error=%s\n", message, ws_last_error());
+    return 1;
+}
+
+static int same_cell(const ws_dynamic_hydrology_cell_state* a,
+                     const ws_dynamic_hydrology_cell_state* b) {
+    return a->cell_x == b->cell_x &&
+           a->cell_y == b->cell_y &&
+           a->active == b->active &&
+           a->snow_water_equivalent_mm == b->snow_water_equivalent_mm &&
+           a->surface_water_mm == b->surface_water_mm &&
+           a->soil_water_mm == b->soil_water_mm &&
+           a->groundwater_mm == b->groundwater_mm &&
+           a->last_evapotranspiration_mm == b->last_evapotranspiration_mm &&
+           a->last_quick_runoff_mm == b->last_quick_runoff_mm &&
+           a->last_baseflow_mm == b->last_baseflow_mm &&
+           a->last_routed_discharge_m3_s == b->last_routed_discharge_m3_s;
+}
+
+static int same_cells(const ws_dynamic_hydrology_cell_state* a,
+                      const ws_dynamic_hydrology_cell_state* b) {
+    for (uint64_t i = 0; i < kTileCellCount; ++i) {
+        if (!same_cell(&a[i], &b[i])) return 0;
+    }
     return 1;
 }
 
@@ -109,7 +132,7 @@ int main(void) {
     }
     if (ws_dynamic_hydrology_simulated_days(state) != day_before ||
         ws_dynamic_hydrology_copy_cells(state, after, kTileCellCount) != 0 ||
-        memcmp(before, after, sizeof(before)) != 0) {
+        !same_cells(before, after)) {
         ws_dynamic_hydrology_state_destroy(state);
         ws_continental_hydrology_result_destroy(continent);
         ws_world_destroy(world);
@@ -139,7 +162,7 @@ int main(void) {
     }
     if (ws_dynamic_hydrology_simulated_days(state) != day_before ||
         ws_dynamic_hydrology_copy_cells(state, after, kTileCellCount) != 0 ||
-        memcmp(before, after, sizeof(before)) != 0) {
+        !same_cells(before, after)) {
         ws_dynamic_hydrology_state_destroy(state);
         ws_continental_hydrology_result_destroy(continent);
         ws_world_destroy(world);
