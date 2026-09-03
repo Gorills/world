@@ -17,7 +17,7 @@ struct WeatherParameters {
     float temperature_variability_c{5.0f};
     float moisture_variability{0.9f};
     float storm_threshold{-0.15f};
-    float storm_intensity{3.0f};
+    float storm_intensity{4.64f};
 
     void validate() const;
 };
