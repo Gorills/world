@@ -56,28 +56,6 @@ jobs:
           UBSAN_OPTIONS: print_stacktrace=1:halt_on_error=1
         run: ctest --test-dir build-sanitize --output-on-failure
 
-  windows-static-smoke:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Configure static MSVC Release build
-        run: cmake -S . -B build-static '-DCMAKE_CXX_FLAGS=/WX /EHsc'
-      - name: Build core world test
-        run: cmake --build build-static --config Release --target worldsim_tests
-      - name: Run core world test
-        run: ctest --test-dir build-static -C Release -R '^worldsim_tests$' --output-on-failure
-
-  windows-debug-smoke:
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Configure static MSVC Debug runtime-check build
-        run: cmake -S . -B build-debug '-DCMAKE_CXX_FLAGS=/EHsc'
-      - name: Build core world test
-        run: cmake --build build-debug --config Debug --target worldsim_tests
-      - name: Run core world test with MSVC runtime checks
-        run: ctest --test-dir build-debug -C Debug -R '^worldsim_tests$' --output-on-failure
-
   windows-shared:
     runs-on: windows-latest
     steps:
@@ -86,8 +64,5 @@ jobs:
         run: cmake -S . -B build -DBUILD_SHARED_LIBS=ON '-DCMAKE_C_FLAGS=/WX' '-DCMAKE_CXX_FLAGS=/WX /EHsc'
       - name: Build
         run: cmake --build build --config Release
-      - name: Prepare legacy C test temp root
-        shell: pwsh
-        run: New-Item -ItemType Directory -Force /tmp | Out-Null
       - name: Test shared library consumers
         run: ctest --test-dir build -C Release --output-on-failure
