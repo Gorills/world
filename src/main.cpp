@@ -17,7 +17,7 @@ namespace {
 
 void usage() {
     std::cout <<
-        "WorldSim CLI v0.5\n"
+        "WorldSim CLI v0.7\n"
         "Usage:\n"
         "  worldsim_cli demo [save.ws]\n"
         "  worldsim_cli inspect <save.ws> <x_m> <y_m>\n"
