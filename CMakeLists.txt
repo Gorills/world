@@ -21,6 +21,7 @@ add_library(worldsim
     src/soil_c_api.cpp
     src/multiresolution_water_c_api.cpp
     src/weather_c_api.cpp
+    src/simulation_c_api.cpp
 )
 add_library(worldsim::worldsim ALIAS worldsim)
 
@@ -137,4 +138,9 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_weather_c_api_tests PRIVATE worldsim::worldsim)
     set_target_properties(worldsim_weather_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
     add_test(NAME worldsim_weather_c_api_tests COMMAND worldsim_weather_c_api_tests)
+
+    add_executable(worldsim_simulation_c_api_tests tests/test_simulation_c_api.c)
+    target_link_libraries(worldsim_simulation_c_api_tests PRIVATE worldsim::worldsim)
+    set_target_properties(worldsim_simulation_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
+    add_test(NAME worldsim_simulation_c_api_tests COMMAND worldsim_simulation_c_api_tests)
 endif()
