@@ -64,6 +64,10 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_weather_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_weather_tests COMMAND worldsim_weather_tests)
 
+    add_executable(worldsim_weather_climatology_tests tests/test_weather_climatology.cpp)
+    target_link_libraries(worldsim_weather_climatology_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_weather_climatology_tests COMMAND worldsim_weather_climatology_tests)
+
     add_executable(worldsim_continental_water_tests tests/test_continental_water.cpp)
     target_link_libraries(worldsim_continental_water_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_continental_water_tests COMMAND worldsim_continental_water_tests)
