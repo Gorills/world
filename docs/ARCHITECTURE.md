@@ -1,4 +1,4 @@
-# Architecture decisions — v0.7
+# Architecture decisions — v0.8
 
 ## 1. Resolution hierarchy
 
@@ -23,18 +23,28 @@ The whole world has one truth but does not need one resolution everywhere.
 - External callers do not receive mutable access to authoritative C++ containers; mutations go through commands.
 - Derived analyses are not promoted to authoritative truth if they depend on arbitrary query boundaries.
 
-v0.3 established authoritative continental topology. v0.4 added standalone detailed L1 water. v0.5 added complete L0 water history and one global day. v0.6 made sparse L1 tiles true refinements of that evolving history. v0.7 adds the first deterministic static L0/L1 environmental property contract without changing dynamic-water ownership.
+v0.3 established authoritative continental topology. v0.4 added standalone detailed L1 water. v0.5 added complete L0 water history and one global day. v0.6 made sparse L1 tiles true refinements of that evolving history. v0.7 added deterministic static L0/L1 soil properties. v0.8 makes those properties part of the bucket model without adding another state authority.
 
-## 3. Soil property truth and parent/child equivalence
+## 3. Soil property truth and effective bucket parameters
 
-`SoilProperties` currently contains two positive dimensionless modifiers:
+`SoilProperties` contains two positive dimensionless modifiers:
 
 - storage-capacity scale;
 - infiltration-capacity scale.
 
-The existing hydrology parameters remain configurable reference values. A property value of `1` means the corresponding reference is unchanged.
+The hydrology parameters remain configurable reference values. Effective local values are derived as:
 
-The parent L0 property is directly reproducible from world seed + climate coordinate. L1 children have deterministic heterogeneity but are normalized by actual world-overlap area so their area-weighted mean is the direct parent value:
+```text
+soil_capacity         = reference_soil_capacity         × storage_scale
+field_capacity        = reference_field_capacity        × storage_scale
+wilting_point         = reference_wilting_point         × storage_scale
+initial_soil_water    = reference_initial_soil_water    × storage_scale
+infiltration_capacity = reference_infiltration_capacity × infiltration_scale
+```
+
+Scaling the three storage thresholds and initial water together preserves their relative bucket geometry and configured initial saturation.
+
+The parent L0 property is directly reproducible from seed + climate coordinate. L1 children have deterministic heterogeneity but are normalized by actual world-overlap area so their area-weighted mean is the direct parent value:
 
 ```text
 parent_scale = Σ(child_scale × child_overlap_area)
@@ -44,15 +54,13 @@ parent_scale = Σ(child_scale × child_overlap_area)
 
 This definition also holds for partial parents on configured world boundaries.
 
-Soil properties are derived static world truth and are not serialized. The current field is synthetic/hash-based scaffolding, not measured soil classes or realistic pedology.
-
-v0.7 does not yet feed these scales into the water equations. Establishing the property identity/aggregation contract first keeps the next water-capacity change bounded and testable.
+Soil properties are derived static world truth and are not serialized. The field remains synthetic/hash-based scaffolding, not measured soil classes or realistic pedology.
 
 ## 4. Water ownership and coarse/fine conservation
 
 Dynamic conserved fields cannot exist as two independently advancing copies.
 
-The v0.6+ water owner has two parent states:
+The water owner has two parent states:
 
 ```text
 coarse-owned:
@@ -73,9 +81,18 @@ Materialization and aggregation conserve these stores separately:
 - soil water;
 - groundwater.
 
-Transfer is volume-based through actual overlap areas. Partial world-boundary cells therefore conserve the same quantity as full cells.
+Transfer uses actual world-overlap area. Partial world-boundary cells therefore obey the same quantity contract as full cells.
 
-Water dynamics still use the existing global reference soil capacity in v0.7. L0→L1 water refinement therefore retains the v0.6 uniform-depth rule for this bounded milestone. The next task will replace that rule only after defining how varying child capacity constrains conservative soil-water redistribution.
+For soil water, uniform parent depth is no longer valid because child capacities differ. v0.8 uses saturation-preserving refinement:
+
+```text
+parent_saturation = parent_soil_water / parent_soil_capacity
+child_soil_water  = parent_saturation × child_soil_capacity
+```
+
+The v0.7 parent-equivalent capacity invariant makes this volume-conservative by construction. A valid parent cannot produce an over-capacity child. Aggregation remains volume-based and validates the parent-equivalent capacity before ownership returns to L0.
+
+Snow, surface water and groundwater continue to transfer by parent depth because no spatial capacity field currently applies to those stores.
 
 ## 5. Coordinates
 
@@ -83,7 +100,7 @@ World positions are double-precision meters. Grid coordinates are signed 64-bit 
 
 Configured world bounds are limited by floating-point precision required by 64 m L2 cells rather than by the much larger formal int64 range.
 
-Raster indexing must reject extreme out-of-range coordinates without signed arithmetic overflow. Continental water, multiresolution refined water and standalone detailed hydrology now use checked lower bounds/representability and unsigned non-negative deltas where required.
+Raster indexing must reject extreme out-of-range coordinates without signed arithmetic overflow. Continental water, multiresolution refined water and standalone detailed hydrology use checked lower bounds/representability and unsigned non-negative deltas where required.
 
 ## 6. Hydrology representation
 
@@ -98,7 +115,7 @@ The L0 whole-world result owns basin/outlet topology. Fixed 8×8 L1 tiles refine
 
 The mixed scheduler still uses the immutable L0 drainage DAG as the parent ordering/connection truth. A refined parent replaces the local L0 bucket/routing interior, not the continental downstream relation.
 
-Authoritative refinement also inherits the coarse parent's ocean classification for every active L1 child. The current ownership boundary therefore never creates a mixed land/ocean child mask inside one L0 parent.
+Authoritative refinement inherits the coarse parent's ocean classification for every active L1 child. The current ownership boundary therefore never creates a mixed land/ocean child mask inside one L0 parent.
 
 ## 7. Global time and mixed-resolution scheduling
 
@@ -110,12 +127,12 @@ One daily step processes parents in the authoritative L0 topological order:
 
 ```text
 unrefined parent
-    → coarse bucket step
+    → capacity-aware coarse bucket step
     → coarse route
 
 refined parent
     ← all upstream channel ingress already collected
-    → detailed 8×8 L1 step
+    → capacity-aware detailed 8×8 L1 step
     → one external outlet volume
     → parent L0 downstream relation
 ```
@@ -130,9 +147,7 @@ Hydrology does not own weather. It consumes precipitation, mean temperature and 
 
 The bundled smooth forcing remains deterministic scaffolding. A future WeatherSystem can replace it without changing water ownership.
 
-Mixed-resolution steps validate forcing, clocks, storage and numerical bounds before committing. Coarse state is advanced in a scratch vector and refined tile results are retained in temporary vectors. The authoritative stores and global day are changed only after the full routed day succeeds.
-
-This extends the v0.5 invalid-input atomicity contract across both resolutions.
+L0 and L1 steps validate local soil capacity before mutation. Mixed-resolution steps validate forcing, clocks, storage, local capacities and numerical bounds before committing. Coarse state is advanced in a scratch vector and refined tile results are retained in temporary vectors. The authoritative stores and global day are changed only after the full routed day succeeds.
 
 ## 9. Determinism
 
@@ -140,33 +155,27 @@ Static terrain/climate/soil state and hydrology use deterministic hashing and ex
 
 Soil sampling is deterministic for identical world configuration and coordinates. L1 soil normalization reconstructs a bounded 8×8 sibling set and depends only on derived world identity/overlap.
 
-Materialization/aggregation and mixed routing are deterministic for identical world/topology/state input on the tested platforms.
+L0 caches parent-equivalent soil scales at water-state construction. L1 derives child properties from the same `WorldConfig`, so materialization, stepping and persistence validation share one property identity.
 
 Strict bit-identical cross-platform floating-point determinism remains a future contract decision.
 
 ## 10. Persistence
 
-Existing `World::save()` format v2 still stores:
-
-- magic/version;
-- world configuration including sea level;
-- persistent materialized L2 patches.
-
-It remains compatible with v1 files, which imply sea level 0 m.
+Existing `World::save()` format v2 still stores world configuration and persistent materialized L2 patches and remains compatible with v1 files, which imply sea level 0 m.
 
 Derived soil properties are not serialized because seed + coordinates reproduce them.
 
-Dynamic multiresolution water is an explicit simulation object and uses a separate versioned persistence file. That file stores:
+Dynamic multiresolution water is a separate explicit simulation object. v0.8 writes multiresolution-water format v2 containing:
 
 - world identity;
-- hydrology parameters;
+- reference hydrology parameters;
 - exact global day;
 - complete L0 dynamic state;
 - sparse refined parent ownership and child states.
 
-Derived continental/refined topology is reconstructed from the supplied `World` and authoritative topology instead of serialized as another topology truth.
+The serialized water fields are not expanded for soil properties; effective capacities are re-derived from world identity. The format version changes because validity semantics changed from one global soil capacity to spatial local capacity.
 
-The loader rejects malformed/truncated data, wrong-world identity, invalid storage, clock mismatches, topology mismatches, duplicate refined parents, contradictory non-zero coarse/refined ownership and trailing bytes.
+Format v1 is explicitly rejected instead of silently reinterpreted. The loader also rejects malformed/truncated data, wrong-world identity, invalid or over-capacity local storage, clock mismatches, topology mismatches, duplicate refined parents, contradictory non-zero coarse/refined ownership and trailing bytes.
 
 ## 11. Engine boundary
 
@@ -174,20 +183,20 @@ The base C ABI continues to use opaque handles plus POD copy functions so engine
 
 Multiresolution water uses a separate opaque `ws_multiresolution_water_state` extension for ownership, materialize/aggregate, state copy, coupled daily stepping and persistence.
 
-v0.7 adds `soil_c_api.h` rather than extending `ws_regional_sample`, preserving the existing POD layout. It reuses the opaque `ws_world` handle and exposes derived soil sampling plus an extension-local error channel.
+`soil_c_api.h` remains an additive query extension. v0.8 does not change existing water POD layouts or function signatures; capacity-aware behavior is internal to the existing state operations.
 
 Game engines render/query the simulation and submit commands; they do not own authoritative state.
 
 ## 12. Scaling
 
-The complete world keeps one compact L0 dynamic water state per continental cell. Only selected refined parents allocate 64 detailed L1 water cells plus their fixed authoritative tile topology.
+The complete world keeps one compact L0 dynamic water state per continental cell. L0 metadata now caches two soil scale floats per cell to avoid reconstructing L1 normalization during every coarse daily step.
 
-Soil does not add a whole-world stored raster. Parent samples are O(1) derived queries. A regional sample currently reconstructs at most the 64 child raw values required to normalize its parent; that is bounded constant work and can be cached later when hydrology begins consuming the field repeatedly.
+Only selected refined parents allocate 64 detailed L1 water cells plus their fixed authoritative tile topology. Soil still does not add a persistent whole-world fine raster.
 
-Dynamic-water memory therefore still grows approximately with:
+Dynamic-water memory therefore remains approximately:
 
 ```text
-all L0 water cells + 64 × active refined parent count
+all L0 water/metadata cells + 64 × active refined parent count
 ```
 
 rather than all L1 cells in Europe.
@@ -196,6 +205,6 @@ The project benchmark uses 449,208 L0 cells and 64 simultaneous refined parents.
 
 ## 13. Current strongest limitation
 
-The spatial soil field now has a stable L0/L1 identity and aggregation rule, but dynamic water does not yet consume it. Storage capacity and infiltration behavior therefore remain homogeneous reference-parameter behavior even where soil queries are heterogeneous.
+Spatial soil capacity now affects actual bucket behavior and conservative resolution transfer. The strongest remaining model simplifications are outside this bounded property integration: atmospheric forcing is still smooth climatological scaffolding, channel routing has no travel-time/flood-wave state, soil is one vertical bucket, and lateral groundwater is absent.
 
-The next bounded task is capacity-aware hydrology integration while preserving v0.6 water ownership and volume conservation. Hydraulic travel time, flood stage, continuous water-surface elevation across tiles, lateral groundwater, wetlands, erosion, sediment and vegetation feedback remain deferred.
+A post-v0.8 audit should choose the next dependency rather than automatically expanding into vegetation or erosion.
