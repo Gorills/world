@@ -55,6 +55,9 @@ target_link_libraries(worldsim_multiresolution_water_benchmark PRIVATE worldsim:
 add_executable(worldsim_weather_benchmark benchmarks/benchmark_weather.cpp)
 target_link_libraries(worldsim_weather_benchmark PRIVATE worldsim::worldsim)
 
+add_executable(worldsim_simulation_benchmark benchmarks/benchmark_simulation.cpp)
+target_link_libraries(worldsim_simulation_benchmark PRIVATE worldsim::worldsim)
+
 if(WORLDSIM_BUILD_TESTS)
     enable_testing()
     add_executable(worldsim_tests tests/test_world.cpp)
