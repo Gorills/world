@@ -77,7 +77,7 @@ A storm signal combines:
 
 Precipitation is zero below a threshold and grows with storm excess above it. The default storm-intensity multiplier is calibrated by a 10-year regression so the aggregate generated precipitation remains anchored to the static climate baseline rather than silently creating a wetter or drier world.
 
-The regression fixture currently observes a long-run generated/climatological precipitation ratio of approximately `0.9997`, with a mean wet-area fraction of approximately `0.667`.
+The original regression fixture currently observes a long-run generated/climatological precipitation ratio of approximately `0.9997`, with a mean wet-area fraction of approximately `0.667`. A second 10-year matrix regression covers multiple seeds and partial/misaligned world bounds so calibration is not accepted from one world identity alone.
 
 These values validate the synthetic default calibration; they are not claims about real-world rain-day frequency.
 
@@ -105,6 +105,8 @@ advance_weather_multiresolution_water_day(...)
 The weather and water grids must belong to the same `WorldConfig` and their exact integer days must match before the step.
 
 The coupled path prepares the complete current-day forcing and next weather state before water is advanced. Water already advances atomically. Weather is committed only after the water call succeeds. Rejected water input therefore cannot advance the atmospheric clock independently.
+
+`ContinentalWaterState` is the older coarse-only v0.5 C++ API and does not store its construction parameter set internally. Its weather-coupled helper therefore requires an explicit `DynamicHydrologyParameters` argument; callers must pass the same parameter set used to construct the state. The multiresolution state already owns its hydrology parameters, so `advance_weather_multiresolution_water_day()` has no external water-parameter argument.
 
 For a refined L0 water parent, every active L1 child receives that parent day's L0 atmospheric forcing. v0.9 deliberately does not invent 1 km weather downscaling before there is a contract for elevation/orographic and sub-grid precipitation effects.
 
