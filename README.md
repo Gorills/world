@@ -1,6 +1,6 @@
-# WorldSim v0.13.0 — derived L1 atmospheric forcing
+# WorldSim v0.14.0 — sparse persistent L2 vegetation
 
-Headless C++20 simulation core for a large persistent world. v0.13 keeps transient atmosphere authoritative at 8192 m L0 while deriving conservative terrain-aware forcing for selectively refined 1024 m L1 hydrology, without adding persistent L1 weather state.
+Headless C++20 simulation core for a large persistent world. v0.14 adds disturbance-aware vegetation recovery to already-materialized 64 m L2 history while keeping whole-world weather/water compact and avoiding eager ecology allocation.
 
 ## Implemented
 
@@ -9,7 +9,7 @@ Headless C++20 simulation core for a large persistent world. v0.13 keeps transie
 - Spatial hierarchy:
   - L0 climate / weather / continental drainage / coarse dynamic water / persistent channel storage / parent-equivalent soil: 8192 m;
   - L1 regional terrain / authoritative refined drainage / selective detailed dynamic water / spatial soil heterogeneity: 1024 m;
-  - L2 local persistent history: 64 m, 16×16 per L1 cell;
+  - L2 local persistent history: 64 m, 16×16 per L1 cell, including disturbance and live vegetation biomass;
   - future entities use continuous coordinates.
 - Europe-scale world bounds without eager L1/L2 allocation.
 - Deterministic procedural terrain, climate and soil scaffolding.
@@ -21,19 +21,21 @@ Headless C++20 simulation core for a large persistent world. v0.13 keeps transie
 - Refined-parent channel ingress through the authoritative L1 drainage graph without bypassing the L0 travel-time boundary.
 - Explicit whole-world transient `WeatherState` with coherent daily precipitation, temperature and PET forcing.
 - Stateless L0→L1 forcing for refined water: bounded elevation-lapse temperature, temperature-derived PET and area-normalized terrain precipitation redistribution that preserves parent precipitation volume to float forcing precision.
+- Sparse persistent L2 vegetation biomass initialized from static forest potential, immediately damaged by surface disturbance and recovered daily from current temperature + authoritative soil saturation.
 - `SimulationState` as the application-level owner of:
-  - `World` persistent L2 history;
+  - `World` persistent L2 disturbance + vegetation history;
   - derived continental topology;
   - `WeatherState`;
   - `MultiresolutionWaterState`, including channel storage.
 - One exact simulation day shared by weather, coarse water and every refined water tile.
-- Runtime refinement, aggregation, daily advance and persistent surface mutation through the unified owner.
-- Compound versioned checkpoints containing World + Weather + Multiresolution Water as one validated generation.
+- Runtime refinement, aggregation, vegetation-aware daily advance and persistent surface mutation through the unified owner.
+- Compound versioned checkpoints containing World (including sparse vegetation), Weather + Multiresolution Water as one validated generation.
 - Multiresolution-water persistence v6 with explicit v2-v5 semantic migration and no duplicated persisted transport/forcing metadata.
 - Checkpoint section lengths/checksums, strict corruption/truncation checks and component identity/clock validation.
 - Same-directory temporary checkpoint publication with validated atomic replacement of an existing target.
+- World persistence v3 with deterministic v1/v2 migration of existing local disturbance history into vegetation biomass.
 - Migration from existing `World::save()` files while preserving materialized L2 history.
-- Additive channel-storage and derived transport queries on standalone multiresolution-water and unified simulation C handles without changing existing pre-existing POD layouts.
+- Additive channel/forcing/vegetation C ABI surfaces without changing existing pre-v0.14 POD layouts or function signatures.
 - CLI `simulation-run` and `simulation-resume` paths.
 - GCC/Clang warnings-as-errors, ASan/UBSan, and complete MSVC shared-library consumer tests.
 - Europe-scale water, weather+water and unified checkpoint benchmarks in GCC CI.
@@ -44,7 +46,7 @@ Headless C++20 simulation core for a large persistent world. v0.13 keeps transie
 
 ```text
 SimulationState
-├── World                      authoritative persistent L2 history
+├── World                      authoritative sparse L2 disturbance + vegetation history
 ├── Continental topology       derived from World
 ├── WeatherState               authoritative transient atmosphere
 └── MultiresolutionWaterState  authoritative conserved water
@@ -63,7 +65,7 @@ simulation.day
 == every refined water tile day
 ```
 
-Daily weather is prepared first, authoritative water advances atomically, and only then is weather committed. A rejected water step cannot split clocks.
+Vegetation forcing and the next sparse L2 history are staged from current-day weather/water first. Authoritative water/weather then advance atomically; only after that succeeds is staged local vegetation history committed with a no-throw swap. A rejected environmental step therefore cannot partially advance vegetation.
 
 ### Terrestrial water
 
@@ -109,6 +111,24 @@ Only start-of-day storage releases. Current-day runoff, upstream arrivals and re
 
 Static `ClimateSample` remains the reproducible long-run baseline. `WeatherState` owns transient atmospheric anomaly state at L0. Refined L1 hydrology derives child forcing on demand from the parent L0 record plus authoritative L1 terrain; the derived records are diagnostics, not another atmospheric state authority.
 
+### Sparse local vegetation
+
+`forest_potential` is deterministic static carrying potential. Materialized L2 cells additionally persist `disturbance` and `vegetation_biomass`.
+
+```text
+disturbance_next = disturbance × exp(-1 / 730)
+target_biomass   = forest_potential × (1 - disturbance_next)
+
+temperature_factor = clamp((T + 2) / 18, 0, 1)
+moisture_factor    = clamp((soil_saturation - 0.1) / 0.6, 0, 1)
+recovery_fraction  = 1 - exp(-(temperature_factor × moisture_factor) / 365)
+
+biomass_next =
+    biomass + (target_biomass - biomass) × recovery_fraction
+```
+
+Only already-materialized L2 patches advance. Surface disturbance immediately clamps biomass to the new disturbed carrying capacity. This is a live-cover/recovery proxy, not species succession or a carbon model.
+
 ## Conservation
 
 For each global mixed-resolution water day:
@@ -120,7 +140,7 @@ storage_before + terrestrial_precipitation
 
 `storage_before` and `storage_after` include terrestrial coarse/refined stores plus all persistent L0 channel storage.
 
-The v0.13 Europe fixture observes a maximum relative daily balance residual of `5.886e-9` on the audited GCC Release run.
+The v0.14 Europe fixture observes a maximum relative daily water-balance residual of `5.886e-9` on the audited GCC Release run while also advancing 16,384 persistent L2 vegetation cells.
 
 ## Compound persistence
 
@@ -130,9 +150,9 @@ The v0.13 Europe fixture observes a maximum relative daily balance residual of `
 2. Weather;
 3. Multiresolution Water.
 
-Channel storage is part of the Multiresolution Water section; it is not a fourth persistence authority. Continental topology is derived from World and is rebuilt on load rather than serialized.
+Channel storage is part of the Multiresolution Water section; it is not a fourth persistence authority. Vegetation is part of the existing World L2 section; it is not a fourth simulation/checkpoint component. Continental topology is derived from World and is rebuilt on load rather than serialized.
 
-Multiresolution-water format v6 keeps the authoritative byte layout introduced by v3. Channel transport and refined atmospheric forcing are derived rather than serialized. v3-v5 files preserve persisted water exactly while adopting current v6 derived transport/forcing semantics after load. A valid v2 file loads with zero channel storage because v2 had no persistent in-channel state. Format v1 remains rejected because it predates the current spatial soil-capacity semantics.
+World format v3 adds one persistent vegetation-biomass float per materialized L2 cell. v1/v2 local history preserves existing fields and derives initial biomass as disturbed forest potential on in-world land cells. Multiresolution-water format v6 remains unchanged: channel transport and refined atmospheric forcing are derived rather than serialized.
 
 The compound save path serializes component sections privately, records byte lengths and FNV-1a corruption checksums, assembles a same-directory publish file, validates the completed container, flushes it, then atomically replaces the target. Failures before publication leave an existing target untouched.
 
@@ -144,15 +164,15 @@ See `docs/SIMULATION.md` for the v0.10 lifecycle/container contract and `docs/CH
 
 ## C ABI
 
-Existing pre-v0.13 C POD layouts and existing function signatures remain compatible in v0.13.
+Existing pre-v0.14 C POD layouts and existing function signatures remain compatible in v0.14.
 
-Additive read-only queries expose channel storage/transport plus derived refined atmospheric forcing. The standalone multiresolution-water ABI derives L1 forcing from an explicit parent L0 forcing record; the unified simulation ABI exposes the current `WeatherState`-derived L1 forcing for an already-refined parent.
+Additive vegetation structs/functions expose local biomass, explicit standalone vegetation stepping and a `ws_simulation_advance_day_v2` report containing environment + vegetation metrics. The old `ws_simulation_advance_day` signature remains unchanged and still advances vegetation as part of the unified generation.
 
-Atmospheric and channel mutation remain solver-owned; the ABI does not expose arbitrary setters.
+Existing channel and refined-forcing query surfaces remain unchanged.
 
 ## Legacy World migration
 
-Existing `World::save()` files remain readable and their format is unchanged.
+Existing `World::save()` v1/v2 files remain readable. New saves use World format v3 because persistent L2 vegetation biomass is now part of local history.
 
 A pre-v0.10 World can become a day-zero unified simulation without losing materialized L2 history:
 
@@ -174,7 +194,8 @@ Weather, terrestrial dynamic water and channel storage start from their determin
 - Channel travel time uses a bounded synthetic daily heuristic from reach length, slope and accumulated discharge; it is not empirically calibrated river celerity.
 - The one-L0-edge-per-day scheduler cannot resolve real sub-daily flood-wave propagation even when a physical reach travel time would be much shorter than one day.
 - No channel capacity, flood-wave/backwater hydraulics, wetlands or floodplains.
-- No erosion, sediment or vegetation feedback.
+- Vegetation is one normalized live-cover/recovery proxy: no species, age structure, succession, seed dispersal, fire, nutrients, carbon pools or vegetation→hydrology feedback.
+- No erosion or sediment feedback.
 
 ## Build
 
@@ -199,18 +220,22 @@ Europe-scale benchmarks:
 ./build/worldsim_simulation_benchmark
 ```
 
-One GCC Release CI observation with v0.13 L1 forcing on the 449,208-L0 / 64-refined fixture measured approximately:
+One GCC Release CI observation with v0.14 sparse vegetation on the 449,208-L0 / 64-refined fixture measured approximately:
 
-- simulation construction: `781.069 ms`;
-- five unified days: `664.648 ms`;
-- checkpoint save: `230.087 ms`;
-- checkpoint load including topology reconstruction: `872.025 ms`;
-- checkpoint size: `21,769,048 bytes` (`~20.76 MiB`);
+- 64 materialized vegetation patches / 16,384 disturbed L2 cells;
+- simulation construction: `671.042 ms`;
+- materialize 64 refined parents: `10.747 ms`;
+- five unified environment + vegetation days: `739.681 ms`;
+- checkpoint save: `386.885 ms`;
+- checkpoint load including topology reconstruction: `751.586 ms`;
+- checkpoint size: `22,093,640 bytes` (`~21.07 MiB`);
 - persistent channel storage after five warmup days: `85,711,133,025.076 m³`;
-- peak benchmark RSS: `267,096 KiB`;
+- vegetation biomass-area after warmup: `12,098,057.493 m²`;
+- vegetation disturbance-area after warmup: `33,325,391.497 m²`;
+- peak benchmark RSS: `270,440 KiB`;
 - maximum relative water-balance residual: `5.886e-9`.
 
-The benchmark requires exact channel equality across every L0 cell after checkpoint reload and again after one deterministic future day. Timings/RSS are environment-specific observations, not API guarantees.
+The benchmark requires exact channel equality across every L0 cell and exact equality of all 64 vegetation patches after checkpoint reload and after one deterministic future day. Timings/RSS are environment-specific observations, not API guarantees.
 
 ## CLI
 
@@ -249,6 +274,7 @@ Legacy focused solver paths remain available:
 - `docs/SIMULATION.md` — unified lifecycle/checkpoint/C ABI/CLI contract introduced in v0.10 and extended by v0.11 water persistence.
 - `docs/CHANNEL_TRANSPORT.md` — current v0.12 persistent reach-aware channel ownership, routing and persistence contract.
 - `docs/WEATHER.md` — L0 transient weather model and v0.13 stateless L1 forcing transform.
+- `docs/VEGETATION.md` — v0.14 sparse L2 biomass, disturbance/recovery and persistence contract.
 - `docs/MULTIRESOLUTION_WATER.md` — historical v0.8 conservative coarse/fine terrestrial ownership design with current-status pointers.
 - `docs/SOIL.md` — static spatial soil properties and capacity integration.
 
@@ -260,9 +286,10 @@ Legacy focused solver paths remain available:
 - `docs/AUDIT_v0.11.md` — validates conserved channel travel time and the v3 persistence/ABI/checkpoint integration.
 - `docs/AUDIT_v0.12.md` — validates reach-aware bounded residence, v5 semantic migration and selects derived L1 atmospheric forcing.
 - `docs/AUDIT_v0.13.md` — validates stateless conservative L1 forcing and v6 semantic migration.
+- `docs/AUDIT_v0.14.md` — validates sparse persistent vegetation, World v3 migration and unified checkpoint evolution.
 
 ## Next bounded milestone
 
-v0.13 closes the forcing-resolution mismatch without creating a duplicate atmospheric authority. Further weather detail such as wind, humidity, radiation or a persistent L1 atmosphere is deferred until a concrete consumer requires it.
+v0.14 establishes the first persistent ecology-facing state without making ecology global/eager. Further plant physics is deferred until a concrete consumer needs it.
 
-The strongest remaining land-water simplification is the absence of lateral groundwater and the single vertically aggregated soil bucket. That should be evaluated against the alternative of moving up the stack into vegetation/ecology/entity state rather than extending hydrology automatically.
+The next strongest product-level gap is now the entity/settlement layer that can consume terrain, weather, water, disturbance and vegetation. Deeper hydrology or richer ecology should be driven by requirements from that layer rather than added by default.
