@@ -74,6 +74,17 @@ void SimulationState::validate_invariants() const {
     }
 }
 
+std::vector<HydrometeorologicalForcing> SimulationState::refined_daily_forcing(
+    CellCoord climate_coord) const {
+    validate_invariants();
+    const auto sample = sample_weather(weather_, climate_coord);
+    const ContinentalWaterForcing parent{
+        sample.precipitation_mm,
+        sample.mean_air_temperature_c,
+        sample.potential_evapotranspiration_mm};
+    return derive_refined_atmospheric_forcing(world_, water_, climate_coord, parent);
+}
+
 WeatherWaterStepReport SimulationState::advance_day() {
     validate_invariants();
     const auto report = advance_weather_multiresolution_water_day(world_, weather_, water_);
