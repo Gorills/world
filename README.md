@@ -1,6 +1,6 @@
-# WorldSim v0.12.0 — persistent reach-aware channel transport
+# WorldSim v0.13.0 — derived L1 atmospheric forcing
 
-Headless C++20 simulation core for a large persistent world. v0.12 closes the uniform-channel-residence limitation with bounded per-reach transport derived from D8 length, filled-elevation slope and accumulated discharge while preserving the existing multiresolution-water authority and compound checkpoint.
+Headless C++20 simulation core for a large persistent world. v0.13 keeps transient atmosphere authoritative at 8192 m L0 while deriving conservative terrain-aware forcing for selectively refined 1024 m L1 hydrology, without adding persistent L1 weather state.
 
 ## Implemented
 
@@ -20,6 +20,7 @@ Headless C++20 simulation core for a large persistent world. v0.12 closes the un
 - One-L0-edge-per-day channel causality: current-day runoff/arrivals cannot be re-released during the same global day.
 - Refined-parent channel ingress through the authoritative L1 drainage graph without bypassing the L0 travel-time boundary.
 - Explicit whole-world transient `WeatherState` with coherent daily precipitation, temperature and PET forcing.
+- Stateless L0→L1 forcing for refined water: bounded elevation-lapse temperature, temperature-derived PET and area-normalized terrain precipitation redistribution that preserves parent precipitation volume to float forcing precision.
 - `SimulationState` as the application-level owner of:
   - `World` persistent L2 history;
   - derived continental topology;
@@ -28,7 +29,7 @@ Headless C++20 simulation core for a large persistent world. v0.12 closes the un
 - One exact simulation day shared by weather, coarse water and every refined water tile.
 - Runtime refinement, aggregation, daily advance and persistent surface mutation through the unified owner.
 - Compound versioned checkpoints containing World + Weather + Multiresolution Water as one validated generation.
-- Multiresolution-water persistence v5 with explicit v2/v3/v4 migration and no duplicated persisted transport metadata.
+- Multiresolution-water persistence v6 with explicit v2-v5 semantic migration and no duplicated persisted transport/forcing metadata.
 - Checkpoint section lengths/checksums, strict corruption/truncation checks and component identity/clock validation.
 - Same-directory temporary checkpoint publication with validated atomic replacement of an existing target.
 - Migration from existing `World::save()` files while preserving materialized L2 history.
@@ -106,7 +107,7 @@ Only start-of-day storage releases. Current-day runoff, upstream arrivals and re
 
 ### Atmosphere
 
-Static `ClimateSample` remains the reproducible long-run baseline. `WeatherState` owns transient atmospheric anomaly state. Hydrology consumes precipitation, temperature and PET forcing records rather than embedding atmosphere.
+Static `ClimateSample` remains the reproducible long-run baseline. `WeatherState` owns transient atmospheric anomaly state at L0. Refined L1 hydrology derives child forcing on demand from the parent L0 record plus authoritative L1 terrain; the derived records are diagnostics, not another atmospheric state authority.
 
 ## Conservation
 
@@ -131,7 +132,7 @@ The v0.12 Europe fixture observes a maximum relative daily balance residual of `
 
 Channel storage is part of the Multiresolution Water section; it is not a fourth persistence authority. Continental topology is derived from World and is rebuilt on load rather than serialized.
 
-Multiresolution-water format v5 keeps the channel-state byte layout introduced by v3. Transport parameters are not serialized: they are re-derived from authoritative topology on create/load. v3 fixed-reservoir and v4 length/slope files therefore preserve their persisted water exactly while migrating to current v5 transport semantics. A valid v2 file loads with zero channel storage because v2 had no persistent in-channel state. Format v1 remains rejected because it predates the current spatial soil-capacity semantics.
+Multiresolution-water format v6 keeps the authoritative byte layout introduced by v3. Channel transport and refined atmospheric forcing are derived rather than serialized. v3-v5 files preserve persisted water exactly while adopting current v6 derived transport/forcing semantics after load. A valid v2 file loads with zero channel storage because v2 had no persistent in-channel state. Format v1 remains rejected because it predates the current spatial soil-capacity semantics.
 
 The compound save path serializes component sections privately, records byte lengths and FNV-1a corruption checksums, assembles a same-directory publish file, validates the completed container, flushes it, then atomically replaces the target. Failures before publication leave an existing target untouched.
 
@@ -143,14 +144,11 @@ See `docs/SIMULATION.md` for the v0.10 lifecycle/container contract and `docs/CH
 
 ## C ABI
 
-Existing pre-v0.12 C POD layouts and existing function signatures remain compatible in v0.12.
+Existing pre-v0.13 C POD layouts and existing function signatures remain compatible in v0.13.
 
-Additive read-only queries expose one L0 channel volume, total channel storage and derived per-reach transport metadata on:
+Additive read-only queries expose channel storage/transport plus derived refined atmospheric forcing. The standalone multiresolution-water ABI derives L1 forcing from an explicit parent L0 forcing record; the unified simulation ABI exposes the current `WeatherState`-derived L1 forcing for an already-refined parent.
 
-- `ws_multiresolution_water_state`;
-- `ws_simulation_state`.
-
-Channel mutation remains solver-owned; the ABI does not expose arbitrary setters.
+Atmospheric and channel mutation remain solver-owned; the ABI does not expose arbitrary setters.
 
 ## Legacy World migration
 
@@ -169,8 +167,9 @@ Weather, terrestrial dynamic water and channel storage start from their determin
 
 - Terrain/climate/soil fields remain synthetic scaffolding, not reconstructed Europe.
 - Weather is a coherent stochastic L0 layer, not numerical weather prediction.
-- No L1 atmospheric downscaling, pressure, wind, humidity, radiation or explicit cloud physics.
-- PET remains a simple temperature proxy.
+- No persistent L1 atmospheric state, pressure, wind, humidity, radiation or explicit cloud physics.
+- L1 precipitation redistribution is a bounded terrain heuristic, not a physical windward/leeward orographic model.
+- PET remains a simple temperature proxy, recalculated from the derived child temperature.
 - Soil remains one vertically aggregated bucket with no lateral groundwater aquifer state.
 - Channel travel time uses a bounded synthetic daily heuristic from reach length, slope and accumulated discharge; it is not empirically calibrated river celerity.
 - The one-L0-edge-per-day scheduler cannot resolve real sub-daily flood-wave propagation even when a physical reach travel time would be much shorter than one day.
@@ -249,7 +248,7 @@ Legacy focused solver paths remain available:
 - `docs/ARCHITECTURE.md` — current ownership and scheduling decisions.
 - `docs/SIMULATION.md` — unified lifecycle/checkpoint/C ABI/CLI contract introduced in v0.10 and extended by v0.11 water persistence.
 - `docs/CHANNEL_TRANSPORT.md` — current v0.12 persistent reach-aware channel ownership, routing and persistence contract.
-- `docs/WEATHER.md` — transient weather model.
+- `docs/WEATHER.md` — L0 transient weather model and v0.13 stateless L1 forcing transform.
 - `docs/MULTIRESOLUTION_WATER.md` — historical v0.8 conservative coarse/fine terrestrial ownership design with current-status pointers.
 - `docs/SOIL.md` — static spatial soil properties and capacity integration.
 
@@ -260,9 +259,10 @@ Legacy focused solver paths remain available:
 - `docs/AUDIT_v0.10.md` — validates the unified lifecycle and selects persistent channel transport.
 - `docs/AUDIT_v0.11.md` — validates conserved channel travel time and the v3 persistence/ABI/checkpoint integration.
 - `docs/AUDIT_v0.12.md` — validates reach-aware bounded residence, v5 semantic migration and selects derived L1 atmospheric forcing.
+- `docs/AUDIT_v0.13.md` — validates stateless conservative L1 forcing and v6 semantic migration.
 
 ## Next bounded milestone
 
-The channel model is now intentionally good enough for the current daily world scale: reach length dominates a weak bounded slope/discharge heuristic, while conservation and one-edge/day causality remain exact engine contracts.
+v0.13 closes the forcing-resolution mismatch without creating a duplicate atmospheric authority. Further weather detail such as wind, humidity, radiation or a persistent L1 atmosphere is deferred until a concrete consumer requires it.
 
-Further river-routing depth is deferred until gameplay or validation requires sub-daily propagation, observed-gauge calibration, or independent control of hydrograph lag versus attenuation. At that point the correct milestone is a routing-resolution/model change rather than more precision in the current heuristic.
+The strongest remaining land-water simplification is the absence of lateral groundwater and the single vertically aggregated soil bucket. That should be evaluated against the alternative of moving up the stack into vegetation/ecology/entity state rather than extending hydrology automatically.
