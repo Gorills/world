@@ -1,6 +1,6 @@
-# Persistent channel transport — v0.11
+# Persistent channel transport — v0.12
 
-v0.11 adds conserved in-channel water to the authoritative mixed-resolution water state. The goal is narrow: remove same-day whole-DAG transport without introducing hydraulic geometry or a second water authority.
+v0.11 introduced conserved in-channel water inside the authoritative mixed-resolution water state. v0.12 keeps that ownership and one-edge/day causality, but replaces uniform residence with a bounded per-reach simulation-scale heuristic derived from existing authoritative topology fields.
 
 ## Ownership
 
