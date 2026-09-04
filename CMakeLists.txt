@@ -1,10 +1,11 @@
 cmake_minimum_required(VERSION 3.20)
-project(worldsim VERSION 0.13.0 LANGUAGES C CXX)
+project(worldsim VERSION 0.14.0 LANGUAGES C CXX)
 
 option(WORLDSIM_BUILD_TESTS "Build WorldSim tests" ON)
 
 add_library(worldsim
     src/world.cpp
+    src/vegetation.cpp
     src/soil.cpp
     src/hydrology.cpp
     src/continental_hydrology.cpp
@@ -67,6 +68,14 @@ if(WORLDSIM_BUILD_TESTS)
     add_executable(worldsim_soil_tests tests/test_soil.cpp)
     target_link_libraries(worldsim_soil_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_soil_tests COMMAND worldsim_soil_tests)
+
+    add_executable(worldsim_vegetation_tests tests/test_vegetation.cpp)
+    target_link_libraries(worldsim_vegetation_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_vegetation_tests COMMAND worldsim_vegetation_tests)
+
+    add_executable(worldsim_vegetation_simulation_tests tests/test_vegetation_simulation.cpp)
+    target_link_libraries(worldsim_vegetation_simulation_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_vegetation_simulation_tests COMMAND worldsim_vegetation_simulation_tests)
 
     add_executable(worldsim_soil_water_capacity_tests tests/test_soil_water_capacity.cpp)
     target_link_libraries(worldsim_soil_water_capacity_tests PRIVATE worldsim::worldsim)
@@ -150,6 +159,11 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_soil_c_api_tests PRIVATE worldsim::worldsim)
     set_target_properties(worldsim_soil_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
     add_test(NAME worldsim_soil_c_api_tests COMMAND worldsim_soil_c_api_tests)
+
+    add_executable(worldsim_vegetation_c_api_tests tests/test_vegetation_c_api.c)
+    target_link_libraries(worldsim_vegetation_c_api_tests PRIVATE worldsim::worldsim)
+    set_target_properties(worldsim_vegetation_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
+    add_test(NAME worldsim_vegetation_c_api_tests COMMAND worldsim_vegetation_c_api_tests)
 
     add_executable(worldsim_multiresolution_water_c_api_tests
         tests/test_multiresolution_water_c_api.c)
