@@ -10,6 +10,11 @@
 
 namespace worldsim {
 
+struct SimulationDayReport {
+    WeatherWaterStepReport environment;
+    VegetationStepReport vegetation;
+};
+
 // Owns the authoritative runtime state that must share one simulation generation.
 // Continental topology is derived from World and is intentionally not an independent
 // persistence authority.
@@ -39,6 +44,7 @@ public:
     [[nodiscard]] std::vector<HydrometeorologicalForcing> refined_daily_forcing(
         CellCoord climate_coord) const;
 
+    [[nodiscard]] SimulationDayReport advance_day_full();
     [[nodiscard]] WeatherWaterStepReport advance_day();
 
     [[nodiscard]] const RefinedWaterTileState& materialize_refined_water_tile(
