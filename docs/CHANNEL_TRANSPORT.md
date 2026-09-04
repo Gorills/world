@@ -148,7 +148,7 @@ Permanent regression coverage includes:
 - the existing 60-day weather-driven mixed-resolution conservation regression, which detected the development-time downstream-arrival overwrite bug;
 - Europe-scale compound checkpoint equality for every L0 channel cell before and after reload and after one deterministic future day.
 
-The permanent Europe fixture contains 449,208 L0 cells and 64 refined parents. One GCC Release CI observation on the v0.11 implementation produced `85,772,959,568.875 m³` of channel storage after five warmup days and a maximum relative water-balance residual of `5.886e-9`.
+The permanent Europe fixture contains 449,208 L0 cells and 64 refined parents. One GCC Release CI observation with the bounded residence heuristic produced `85,711,133,025.076 m³` of channel storage after five warmup days and a maximum relative water-balance residual of `5.886e-9`.
 
 Those values are observations, not API or performance guarantees.
 
