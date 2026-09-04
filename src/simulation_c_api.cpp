@@ -155,6 +155,30 @@ void copy_refined_forcing(
     out.mean_air_temperature_c = in.mean_air_temperature_c;
     out.potential_evapotranspiration_mm = in.potential_evapotranspiration_mm;
 }
+
+void copy_vegetation_report(
+    const worldsim::VegetationStepReport& in,
+    ws_vegetation_step_report& out) {
+    out.patch_count = in.patch_count;
+    out.land_cell_count = in.land_cell_count;
+    out.land_area_m2 = in.land_area_m2;
+    out.biomass_area_before_m2 = in.biomass_area_before_m2;
+    out.biomass_area_after_m2 = in.biomass_area_after_m2;
+    out.disturbance_area_before_m2 = in.disturbance_area_before_m2;
+    out.disturbance_area_after_m2 = in.disturbance_area_after_m2;
+}
+
+void copy_local_vegetation(
+    const worldsim::LocalPatch& patch,
+    ws_local_vegetation_cell* out_cells) {
+    for (std::size_t i = 0; i < worldsim::kLocalCellCount; ++i) {
+        out_cells[i].local_x = static_cast<uint32_t>(i % worldsim::kLocalCellsPerAxis);
+        out_cells[i].local_y = static_cast<uint32_t>(i / worldsim::kLocalCellsPerAxis);
+        out_cells[i].forest_potential = patch.cells[i].forest_potential;
+        out_cells[i].disturbance = patch.cells[i].disturbance;
+        out_cells[i].vegetation_biomass = patch.cells[i].vegetation_biomass;
+    }
+}
 } // namespace
 
 extern "C" {
@@ -330,6 +354,25 @@ int ws_simulation_copy_refined_daily_forcing(
     });
 }
 
+int ws_simulation_copy_local_vegetation(
+    const ws_simulation_state* state,
+    int64_t region_x,
+    int64_t region_y,
+    ws_local_vegetation_cell* out_cells,
+    uint64_t capacity) {
+    return guarded([&] {
+        if (!state || !out_cells) throw std::invalid_argument("state/out_cells is null");
+        if (capacity < WS_LOCAL_PATCH_CELL_COUNT) {
+            throw std::invalid_argument("simulation local vegetation output capacity is too small");
+        }
+        const auto* patch = state->impl.world().find_local_patch({region_x, region_y});
+        if (!patch) {
+            throw std::invalid_argument("simulation local vegetation patch is not materialized");
+        }
+        copy_local_vegetation(*patch, out_cells);
+    });
+}
+
 int ws_simulation_advance_day(
     ws_simulation_state* state,
     ws_weather_water_step_report* out_report) {
@@ -338,6 +381,18 @@ int ws_simulation_advance_day(
         const auto report = state->impl.advance_day();
         copy_weather_report(report.weather, out_report->weather);
         copy_water_report(report.water, out_report->water);
+    });
+}
+
+int ws_simulation_advance_day_v2(
+    ws_simulation_state* state,
+    ws_simulation_day_report_v2* out_report) {
+    return guarded([&] {
+        if (!state || !out_report) throw std::invalid_argument("state/out_report is null");
+        const auto report = state->impl.advance_day_full();
+        copy_weather_report(report.environment.weather, out_report->environment.weather);
+        copy_water_report(report.environment.water, out_report->environment.water);
+        copy_vegetation_report(report.vegetation, out_report->vegetation);
     });
 }
 
