@@ -19,13 +19,25 @@ A daily mixed-resolution step has two distinct channel generations:
 
 Only generation 1 may release during that day.
 
-For each terrestrial L0 cell, the release is a fixed linear-reservoir fraction:
+For each terrestrial L0 cell, release remains a linear-reservoir response, but the residence time is now a bounded per-reach simulation heuristic:
 
 ```text
-release = channel_storage_at_day_start × 0.6321205588285577
+length_cells = 1 for cardinal D8, sqrt(2) for diagonal D8
+slope        = max(downhill_gradient, 1e-5)
+discharge    = max(accumulated_discharge_m3_s, 1)
+
+residence_days = clamp(
+    length_cells
+    × (slope / 1e-5)^-0.08
+    × (discharge / 100)^-0.06,
+    0.75,
+    3.0)
+
+release_fraction = 1 - exp(-1 / residence_days)
+release = channel_storage_at_day_start × release_fraction
 ```
 
-This is the one-day response of a reservoir with a one-day e-folding time. The remaining start-of-day volume stays in the local channel store.
+D8 length is intentionally dominant. Filled-elevation slope and accumulated discharge only weakly alter residence, and the 0.75–3 day clamp prevents a daily global model from implying unsupported hydraulic precision. A flat cardinal reach at the 100 m³/s reference discharge retains the original one-day residence. The remaining start-of-day volume stays in the local channel store.
 
 Current-day quick runoff/baseflow is added to the source L0 channel store only after release has been determined. It cannot be re-released until a later day.
 
@@ -86,11 +98,11 @@ Coarse bucket state, refined child state and channel volumes are accumulated in 
 
 ## Persistence
 
-Multiresolution-water persistence is format **v3**.
+Multiresolution-water persistence is format **v5**.
 
-v3 retains the existing world identity, hydrology parameters, day, coarse cells and sparse refined ownership, and adds one `double` channel volume per L0 cell.
+The authoritative storage layout remains the v3 layout: world identity, hydrology parameters, day, coarse cells, one `double` channel volume per L0 cell and sparse refined ownership. Derived transport metadata is not serialized.
 
-The loader validates channel count/shape, finiteness, non-negativity and the invariant that ocean L0 cells own zero channel water.
+The loader validates channel count/shape, finiteness, non-negativity and the invariant that ocean L0 cells own zero channel water. v3 fixed-reservoir and v4 length/slope files preserve all persisted water while deriving current v5 length/slope/discharge transport from the supplied authoritative topology.
 
 Format v2 is migrated explicitly: v2 had no persistent in-channel state, so loading a valid v2 file creates the same terrestrial/refined state with every channel volume initialized to zero.
 
@@ -113,9 +125,10 @@ C++ exposes read-only channel queries:
 ```cpp
 water.channel_storage_m3(climate_coord)
 water.total_channel_storage_m3()
+water.channel_transport(climate_coord)
 ```
 
-The C ABI adds query functions for the standalone multiresolution-water handle and the unified simulation handle. Existing C structs and existing function signatures are unchanged.
+`channel_transport()` reports reach length, downhill gradient, bounded residence days and daily release fraction. The C ABI exposes equivalent transport queries for the standalone multiresolution-water handle and the unified simulation handle.
 
 The channel state remains mutation-controlled by the daily solver; the public APIs do not provide arbitrary setters.
 
@@ -127,8 +140,8 @@ Permanent regression coverage includes:
 - one-edge delayed L0 transport through a refined parent;
 - channel storage unchanged by materialize/aggregate ownership changes;
 - invalid-step atomicity including the channel array;
-- exact v3 water persistence round-trip;
-- explicit v2 → zero-channel migration;
+- exact v5 water persistence round-trip;
+- explicit v3/v4 → current-transport migration and v2 → zero-channel migration;
 - corruption/non-finite channel rejection;
 - C ABI channel queries and exact standalone save/load preservation;
 - compound simulation C ABI channel preservation and exact future equivalence;
@@ -141,16 +154,19 @@ Those values are observations, not API or performance guarantees.
 
 ## Deliberate limitations
 
-v0.11 is a conserved travel-time model, not open-channel hydraulics.
+This remains a conserved travel-time model, not open-channel hydraulics.
+
+The current per-reach residence formula is an intentionally weak simulation-scale heuristic. It is not calibrated against gauge-to-gauge travel times and does not claim that `accumulated_discharge_m3_s` plus filled-elevation slope reconstruct physical river velocity.
 
 It deliberately does not add:
 
-- spatially varying reach residence time;
-- channel width/depth/capacity or velocity derived from discharge/geometry;
-- sub-daily flood-wave propagation;
+- sub-daily/multi-L0-edge flood-wave propagation;
+- calibrated channel celerity;
+- independent hydrograph lag and attenuation parameters;
+- channel width/depth/capacity or Manning roughness;
 - backwater effects;
 - floodplain/wetland exchange;
 - lateral groundwater-channel exchange;
 - sediment or erosion feedback.
 
-The fixed one-day reservoir is intentionally simple. A later routing milestone can replace the fixed coefficient with derived per-reach transport parameters without changing the ownership, conservation or checkpoint boundaries established here.
+Further hydraulic detail should wait for a requirement that exceeds the daily one-edge model; otherwise additional calibration would imply precision the scheduler cannot express.
