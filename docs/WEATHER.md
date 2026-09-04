@@ -184,13 +184,13 @@ The coupled C entry point operates on the existing opaque multiresolution-water 
 
 The Europe-scale CI fixture contains 449,208 L0 cells and 64 refined water parents.
 
-One GCC Release CI observation after default precipitation calibration measured:
+One GCC Release CI observation with v0.13 refined forcing measured:
 
-- weather-state construction: about 205 ms;
-- 30 coupled weather + mixed-resolution water days: about 3.87 s;
-- mean coupled day: about 129 ms;
-- peak RSS: about 136 MiB;
-- maximum relative water-balance residual: `5.9e-9`.
+- weather-state construction: about `227.908 ms`;
+- 30 coupled weather + mixed-resolution water days: about `3976.063 ms`;
+- mean coupled day: about `132.535 ms`;
+- peak RSS: about `157,188 KiB`;
+- maximum relative water-balance residual: `5.886e-9`.
 
 These are runner-specific observations, not timing or memory guarantees. CI enforces correctness/conservation rather than a wall-clock threshold.
 
