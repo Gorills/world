@@ -333,16 +333,16 @@ The v0.13 Europe checkpoint CI fixture uses:
 - exact channel equality across every L0 cell after reload;
 - exact next-day equivalence after reload, including all channel cells.
 
-One GCC Release CI observation with the bounded residence heuristic measured approximately:
+One GCC Release CI observation with v0.13 refined forcing measured approximately:
 
-- unified simulation construction: `857.664 ms`;
-- materialize 64 parents: `14.077 ms`;
-- five unified days: `790.442 ms`;
-- checkpoint save: `174.015 ms`;
-- checkpoint load including topology reconstruction: `971.509 ms`;
+- unified simulation construction: `781.069 ms`;
+- materialize 64 parents: `11.674 ms`;
+- five unified days: `664.648 ms`;
+- checkpoint save: `230.087 ms`;
+- checkpoint load including topology reconstruction: `872.025 ms`;
 - checkpoint size: `21,769,048 bytes` (`~20.76 MiB`);
 - channel storage after five warmup days: `85,711,133,025.076 m³`;
-- peak RSS: `266,788 KiB`;
+- peak RSS: `267,096 KiB`;
 - maximum relative water-balance residual: `5.886e-9`.
 
 These are CI observations, not API/performance guarantees.
