@@ -9,6 +9,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <unordered_map>
+#include <vector>
 
 namespace worldsim {
 
@@ -41,10 +42,14 @@ public:
     [[nodiscard]] const LocalPatch& materialize_local_patch(CellCoord regional_coord);
     [[nodiscard]] const LocalPatch* find_local_patch(CellCoord regional_coord) const noexcept;
     [[nodiscard]] std::size_t materialized_patch_count() const noexcept { return local_patches_.size(); }
+    [[nodiscard]] std::vector<CellCoord> materialized_patch_coords() const;
 
-    // First persistent mutation primitive. A later vegetation system will consume disturbance.
-    // Returns the number of local cells whose stored disturbance actually increased.
+    // Persistent surface disturbance immediately suppresses local live biomass. Daily vegetation
+    // recovery is sparse: only already-materialized L2 patches advance, and this call never
+    // materializes new local history.
     std::size_t disturb_surface(WorldPosition min, WorldPosition max, float amount);
+    [[nodiscard]] VegetationStepReport advance_materialized_vegetation_day(
+        const std::vector<VegetationForcing>& forcing);
 
     void save(const std::filesystem::path& path) const;
     [[nodiscard]] static World load(const std::filesystem::path& path);
@@ -55,8 +60,11 @@ private:
 
     [[nodiscard]] LocalPatch generate_local_patch(CellCoord regional_coord) const;
     LocalPatch& materialize_local_patch_mutable(CellCoord regional_coord);
+    void swap_local_history(World& other) noexcept;
     void require_climate_in_bounds(CellCoord coord) const;
     void require_region_in_bounds(CellCoord coord) const;
+
+    friend class SimulationState;
 };
 
 } // namespace worldsim

@@ -1,5 +1,7 @@
 #include "worldsim/simulation.hpp"
 
+#include "worldsim/vegetation.hpp"
+
 #include <stdexcept>
 #include <utility>
 
@@ -85,11 +87,28 @@ std::vector<HydrometeorologicalForcing> SimulationState::refined_daily_forcing(
     return derive_refined_atmospheric_forcing(world_, water_, climate_coord, parent);
 }
 
+SimulationDayReport SimulationState::advance_day_full() {
+    validate_invariants();
+
+    // Vegetation consumes current-day atmosphere/water just like hydrology. Stage the entire
+    // sparse local-history map first; if environmental advance rejects, World remains unchanged.
+    const auto vegetation_forcing =
+        make_materialized_vegetation_forcing(world_, weather_, water_);
+    World staged_world = world_;
+    const auto vegetation_report =
+        staged_world.advance_materialized_vegetation_day(vegetation_forcing);
+
+    const auto environment =
+        advance_weather_multiresolution_water_day(world_, weather_, water_);
+
+    // No-throw sparse-history swap closes the generation atomically after weather/water commit.
+    world_.swap_local_history(staged_world);
+    validate_invariants();
+    return {environment, vegetation_report};
+}
+
 WeatherWaterStepReport SimulationState::advance_day() {
-    validate_invariants();
-    const auto report = advance_weather_multiresolution_water_day(world_, weather_, water_);
-    validate_invariants();
-    return report;
+    return advance_day_full().environment;
 }
 
 const RefinedWaterTileState& SimulationState::materialize_refined_water_tile(

@@ -214,6 +214,20 @@ LocalPatch World::generate_local_patch(CellCoord regional_coord) const {
             cell.terrain_roughness = clamp01(0.65 * parent.terrain_roughness + 0.35 * std::abs(micro));
             cell.forest_potential = clamp01(static_cast<double>(parent.forest_potential) + fine * 0.18 - std::abs(micro) * 0.05);
             cell.disturbance = 0.0f;
+            const double local_s = static_cast<double>(config_.local_cell_m);
+            const double cx0 = region_x0 + static_cast<double>(lx) * local_s;
+            const double cy0 = region_y0 + static_cast<double>(ly) * local_s;
+            const double cx1 = cx0 + local_s;
+            const double cy1 = cy0 + local_s;
+            const bool overlaps_world =
+                cx1 > config_.bounds.origin_x_m &&
+                cx0 < config_.bounds.origin_x_m + config_.bounds.width_m &&
+                cy1 > config_.bounds.origin_y_m &&
+                cy0 < config_.bounds.origin_y_m + config_.bounds.height_m;
+            cell.vegetation_biomass =
+                overlaps_world && cell.elevation_m > config_.sea_level_m
+                    ? cell.forest_potential
+                    : 0.0f;
         }
     }
 
@@ -288,6 +302,12 @@ std::size_t World::disturb_surface(WorldPosition min, WorldPosition max, float a
                         auto& cell = patch.cells[ly * kLocalCellsPerAxis + lx];
                         if (amount > cell.disturbance) {
                             cell.disturbance = amount;
+                            const float disturbed_capacity =
+                                cell.elevation_m > config_.sea_level_m
+                                    ? cell.forest_potential * (1.0f - amount)
+                                    : 0.0f;
+                            cell.vegetation_biomass =
+                                std::min(cell.vegetation_biomass, disturbed_capacity);
                             ++affected;
                         }
                     }

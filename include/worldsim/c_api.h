@@ -50,6 +50,31 @@ typedef struct ws_local_cell {
     float disturbance;
 } ws_local_cell;
 
+typedef struct ws_local_vegetation_cell {
+    uint32_t local_x;
+    uint32_t local_y;
+    float forest_potential;
+    float disturbance;
+    float vegetation_biomass;
+} ws_local_vegetation_cell;
+
+typedef struct ws_vegetation_forcing {
+    int64_t regional_x;
+    int64_t regional_y;
+    float mean_air_temperature_c;
+    float soil_saturation;
+} ws_vegetation_forcing;
+
+typedef struct ws_vegetation_step_report {
+    uint64_t patch_count;
+    uint64_t land_cell_count;
+    double land_area_m2;
+    double biomass_area_before_m2;
+    double biomass_area_after_m2;
+    double disturbance_area_before_m2;
+    double disturbance_area_after_m2;
+} ws_vegetation_step_report;
+
 typedef struct ws_hydrology_request {
     int64_t min_region_x;
     int64_t min_region_y;
@@ -211,6 +236,17 @@ WORLDSIM_API int ws_world_sample_region(ws_world* world, double x_m, double y_m,
 WORLDSIM_API int ws_world_materialize_region(ws_world* world, int64_t region_x, int64_t region_y);
 WORLDSIM_API int ws_world_copy_local_patch(ws_world* world, int64_t region_x, int64_t region_y,
                                             ws_local_cell* out_cells, uint64_t capacity);
+WORLDSIM_API int ws_world_copy_local_vegetation(
+    ws_world* world,
+    int64_t region_x,
+    int64_t region_y,
+    ws_local_vegetation_cell* out_cells,
+    uint64_t capacity);
+WORLDSIM_API int ws_world_advance_materialized_vegetation_day(
+    ws_world* world,
+    const ws_vegetation_forcing* forcing,
+    uint64_t forcing_count,
+    ws_vegetation_step_report* out_report);
 WORLDSIM_API uint64_t ws_world_materialized_patch_count(ws_world* world);
 
 WORLDSIM_API ws_continental_hydrology_result* ws_world_analyze_continental_hydrology(
