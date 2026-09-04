@@ -120,7 +120,7 @@ storage_before + terrestrial_precipitation
 
 `storage_before` and `storage_after` include terrestrial coarse/refined stores plus all persistent L0 channel storage.
 
-The v0.12 Europe fixture observes a maximum relative daily balance residual of `5.886e-9` on the audited GCC Release run.
+The v0.13 Europe fixture observes a maximum relative daily balance residual of `5.886e-9` on the audited GCC Release run.
 
 ## Compound persistence
 
@@ -199,15 +199,15 @@ Europe-scale benchmarks:
 ./build/worldsim_simulation_benchmark
 ```
 
-One GCC Release CI observation with the bounded residence heuristic on the 449,208-L0 / 64-refined fixture measured approximately:
+One GCC Release CI observation with v0.13 L1 forcing on the 449,208-L0 / 64-refined fixture measured approximately:
 
-- simulation construction: `857.664 ms`;
-- five unified days: `790.442 ms`;
-- checkpoint save: `174.015 ms`;
-- checkpoint load including topology reconstruction: `971.509 ms`;
+- simulation construction: `781.069 ms`;
+- five unified days: `664.648 ms`;
+- checkpoint save: `230.087 ms`;
+- checkpoint load including topology reconstruction: `872.025 ms`;
 - checkpoint size: `21,769,048 bytes` (`~20.76 MiB`);
 - persistent channel storage after five warmup days: `85,711,133,025.076 m³`;
-- peak benchmark RSS: `266,788 KiB`;
+- peak benchmark RSS: `267,096 KiB`;
 - maximum relative water-balance residual: `5.886e-9`.
 
 The benchmark requires exact channel equality across every L0 cell after checkpoint reload and again after one deterministic future day. Timings/RSS are environment-specific observations, not API guarantees.
