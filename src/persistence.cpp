@@ -44,6 +44,25 @@ bool region_intersects_bounds(CellCoord coord, const WorldConfig& config) {
     return x1 > bx0 && x0 < bx1 && y1 > by0 && y0 < by1;
 }
 
+bool local_cell_intersects_bounds(
+    CellCoord regional_coord,
+    std::size_t index,
+    const WorldConfig& config) {
+    const std::size_t lx = index % kLocalCellsPerAxis;
+    const std::size_t ly = index / kLocalCellsPerAxis;
+    const double local = static_cast<double>(config.local_cell_m);
+    const double region_x0 = static_cast<double>(regional_coord.x) * config.regional_cell_m;
+    const double region_y0 = static_cast<double>(regional_coord.y) * config.regional_cell_m;
+    const double x0 = region_x0 + static_cast<double>(lx) * local;
+    const double y0 = region_y0 + static_cast<double>(ly) * local;
+    const double x1 = x0 + local;
+    const double y1 = y0 + local;
+    return x1 > config.bounds.origin_x_m &&
+        x0 < config.bounds.origin_x_m + config.bounds.width_m &&
+        y1 > config.bounds.origin_y_m &&
+        y0 < config.bounds.origin_y_m + config.bounds.height_m;
+}
+
 void validate_cell(const LocalCell& cell, const WorldConfig& config) {
     if (!std::isfinite(cell.elevation_m) || !std::isfinite(cell.terrain_roughness) ||
         !std::isfinite(cell.forest_potential) || !std::isfinite(cell.disturbance) ||
@@ -175,7 +194,8 @@ void load_world(const std::filesystem::path& path,
         if (!region_intersects_bounds(patch.regional_coord, config)) {
             throw std::runtime_error("world file contains a local patch outside world bounds");
         }
-        for (LocalCell& cell : patch.cells) {
+        for (std::size_t i = 0; i < patch.cells.size(); ++i) {
+            auto& cell = patch.cells[i];
             read_pod(in, cell.elevation_m);
             read_pod(in, cell.terrain_roughness);
             read_pod(in, cell.forest_potential);
@@ -184,6 +204,7 @@ void load_world(const std::filesystem::path& path,
                 read_pod(in, cell.vegetation_biomass);
             } else {
                 cell.vegetation_biomass =
+                    local_cell_intersects_bounds(patch.regional_coord, i, config) &&
                     cell.elevation_m > config.sea_level_m
                         ? cell.forest_potential * (1.0f - cell.disturbance)
                         : 0.0f;
