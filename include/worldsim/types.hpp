@@ -81,6 +81,23 @@ struct LocalCell {
     float terrain_roughness{};
     float forest_potential{};
     float disturbance{};         // persistent 0..1 human/natural surface disturbance
+    float vegetation_biomass{};  // persistent 0..1 live-cover proxy, bounded by forest potential
+};
+
+struct VegetationForcing {
+    CellCoord regional_coord{};
+    float mean_air_temperature_c{};
+    float soil_saturation{};     // normalized 0..1 current terrestrial soil-water saturation
+};
+
+struct VegetationStepReport {
+    std::uint64_t patch_count{};
+    std::uint64_t land_cell_count{};
+    double land_area_m2{};
+    double biomass_area_before_m2{};
+    double biomass_area_after_m2{};
+    double disturbance_area_before_m2{};
+    double disturbance_area_after_m2{};
 };
 
 constexpr std::size_t kLocalCellsPerAxis = 16;
