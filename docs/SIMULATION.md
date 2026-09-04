@@ -1,6 +1,6 @@
-# Unified simulation state and checkpoints — v0.10 lifecycle, extended by v0.11
+# Unified simulation state and checkpoints — v0.14 lifecycle
 
-v0.10 introduced `SimulationState` as the lifecycle boundary for a running WorldSim world. v0.11 keeps that ownership/container design unchanged and adds persistent channel storage inside the existing Multiresolution Water component. The channel-specific contract is documented in `docs/CHANNEL_TRANSPORT.md`.
+v0.10 introduced `SimulationState` as the lifecycle boundary for a running WorldSim world. v0.14 keeps the same three-component checkpoint authority while extending the World section with sparse persistent L2 vegetation. Channel and refined-forcing contracts remain documented separately in `docs/CHANNEL_TRANSPORT.md` and `docs/WEATHER.md`.
 
 The goal is not to hide the existing subsystems. It is to ensure that persistent world history, transient weather and conserved multiresolution water can no longer be accidentally treated as unrelated save generations by normal application code.
 
@@ -8,16 +8,16 @@ The goal is not to hide the existing subsystems. It is to ensure that persistent
 
 A `SimulationState` owns:
 
-- one `World`;
+- one `World`, including sparse L2 disturbance + vegetation history;
 - one `WeatherState`;
-- one `MultiresolutionWaterState`, including v0.11 L0 channel storage;
+- one `MultiresolutionWaterState`, including persistent L0 channel storage;
 - the continental drainage topology derived from that `World`.
 
 Continental topology is intentionally **derived state**, not a fourth persistence authority. Channel storage is likewise not a fourth component: it is conserved water owned by `MultiresolutionWaterState`.
 
 Public component accessors are const views. Runtime mutation is routed through simulation commands:
 
-- `advance_day()`;
+- `advance_day()` / additive `advance_day_full()`;
 - `materialize_refined_water_tile()`;
 - `aggregate_refined_water_tile()`;
 - `disturb_surface()`;
@@ -36,7 +36,7 @@ SimulationState::simulated_day()
 == every refined water tile day
 ```
 
-Daily stepping uses the existing atomic weather + multiresolution-water helper. Weather's next state is prepared before the water step and committed only after water succeeds. A rejected water step therefore cannot leave the unified owner with split clocks.
+Daily stepping derives vegetation forcing from current weather/water and advances a staged copy of sparse World history first. The existing weather + multiresolution-water step then commits atomically. Only after that succeeds does a no-throw local-history swap publish the staged vegetation generation. A rejected environmental step therefore cannot leave vegetation ahead of weather/water.
 
 The constructor and checkpoint loader reject inconsistent component identity or clock state before exposing a `SimulationState`.
 
@@ -55,7 +55,7 @@ auto world = worldsim::World::load("legacy.ws");
 auto simulation = worldsim::SimulationState::from_world(std::move(world));
 ```
 
-`from_world()` preserves the exact existing `World` configuration and materialized L2 history. Weather and water begin at aligned day zero because those transient authorities were not part of the legacy World file. In v0.11 the new channel array also begins at zero.
+`from_world()` preserves the exact existing `World` configuration and materialized L2 history. World v1/v2 patches migrate deterministic vegetation biomass from their persisted forest potential/disturbance. Weather and water begin at aligned day zero because those transient authorities were not part of the legacy World file; channel storage likewise starts at zero for legacy World-only saves.
 
 ## Compound checkpoint format
 
@@ -74,7 +74,7 @@ The header stores:
 
 The section payloads are the existing versioned component formats. This deliberately reuses their validation instead of introducing a second serializer for the same state.
 
-v0.11 does not add a channel section. Multiresolution-water format v3 stores the persistent L0 channel array inside section 3, so the compound authority and load order remain unchanged.
+v0.14 still has exactly three sections. Persistent vegetation is serialized inside World format v3; channel storage remains inside Multiresolution Water. Neither feature creates another checkpoint authority.
 
 The topology is not serialized. On load the sequence is:
 
@@ -96,7 +96,7 @@ require component clocks == checkpoint global day
 expose SimulationState
 ```
 
-Component loaders retain their own wrong-world, malformed-state, capacity, ownership and trailing-data checks. The v0.11 water loader additionally validates channel shape/values and supports v2 → zero-channel migration.
+Component loaders retain their own wrong-world, malformed-state, capacity, ownership and trailing-data checks. World v3 validates normalized vegetation state and migrates v1/v2 local history; multiresolution-water v6 retains its existing channel/forcing migrations.
 
 FNV-1a is used for accidental-corruption detection only. It is not a cryptographic authenticity mechanism and checkpoints must not be treated as secure against a maliciously constructed file.
 
@@ -128,14 +128,15 @@ The handle owns the complete unified state. It does not hand out mutable compone
 - global-day/L0/refined/L2 counts;
 - regional and weather sampling;
 - coarse/refined water copies;
-- v0.11 read-only per-L0 and total channel-storage queries;
-- one-day advance;
+- read-only channel/transport and refined-forcing queries;
+- read-only local vegetation copy for existing materialized patches;
+- legacy one-day advance plus additive `ws_simulation_advance_day_v2` environment+vegetation report;
 - refinement and aggregation commands;
 - persistent surface disturbance;
 - compound checkpoint save/load;
 - a simulation-specific thread-local error string.
 
-Existing standalone World/weather/water C APIs remain source-compatible. v0.11 adds functions but changes no existing C POD layouts or signatures.
+Existing standalone World/weather/water C APIs remain source-compatible. v0.14 adds separate vegetation PODs/functions and does not extend or reorder older C structs/signatures.
 
 ## CLI migration and resume
 
@@ -162,11 +163,12 @@ The simulation/checkpoint tests cover:
 - exact global weather/water clock alignment;
 - no accidental L2 materialization from construction, sampling or daily stepping;
 - refined-water ownership through the unified command boundary;
-- persistent L2 disturbance ownership;
+- persistent L2 disturbance + vegetation ownership;
 - exact weather/coarse/refined round-trip state;
-- exact v0.11 channel state through standalone and compound persistence;
+- exact channel state through standalone and compound persistence;
+- World v1/v2 → v3 vegetation migration;
 - byte-for-byte canonical reserialization of identical state on the same build/platform;
-- exact deterministic next-day evolution after reload, including channel storage;
+- exact deterministic next-day evolution after reload, including channel and vegetation state;
 - replacement of an existing checkpoint;
 - checksum corruption, truncation and global/component clock mismatch rejection;
 - migration of pre-v0.10 World L2 history;
@@ -177,21 +179,21 @@ CI runs GCC and Clang with warnings-as-errors, ASan/UBSan, and the complete shar
 
 ## Europe-scale checkpoint observation
 
-The GCC Release CI benchmark uses the same 449,208-L0-cell Europe-scale fixture as the water/weather benchmarks, with 64 refined water parents and persistent L2 history.
+The GCC Release CI benchmark uses the same 449,208-L0-cell Europe-scale fixture as the water/weather benchmarks, with 64 refined water parents and 64 materialized vegetation patches (16,384 L2 cells).
 
-One v0.11 CI observation measured approximately:
+One v0.14 CI observation measured approximately:
 
-- unified simulation construction: `815.272 ms`;
-- materialize 64 refined parents: `14.048 ms`;
-- five unified days: `776.130 ms`;
-- compound checkpoint save: `170.951 ms`;
-- compound checkpoint load including topology reconstruction: `939.440 ms`;
-- checkpoint size: `21,769,048 bytes` (`~20.76 MiB`);
-- persistent channel storage after five warmup days: `85,772,959,568.875 m³`;
-- peak RSS during the benchmark: `238,800 KiB`;
+- unified simulation construction: `671.042 ms`;
+- materialize 64 refined parents: `10.747 ms`;
+- five unified environment + vegetation days: `739.681 ms`;
+- compound checkpoint save: `386.885 ms`;
+- compound checkpoint load including topology reconstruction: `751.586 ms`;
+- checkpoint size: `22,093,640 bytes` (`~21.07 MiB`);
+- persistent channel storage after five warmup days: `85,711,133,025.076 m³`;
+- peak RSS during the benchmark: `270,440 KiB`;
 - maximum relative water-balance residual: `5.886e-9`.
 
-The benchmark requires exact channel equality across every L0 cell after reload and after one deterministic future day. These values are environment-specific observations, not performance guarantees.
+The benchmark requires exact channel equality across every L0 cell plus exact equality of all 64 vegetation patches after reload and after one deterministic future day. These values are environment-specific observations, not performance guarantees.
 
 ## Format portability
 
