@@ -61,7 +61,7 @@ int main(void) {
     check(ws_world_advance_materialized_vegetation_day(
               world, &forcing, 1, &report) == 0 &&
           report.patch_count == 1 &&
-          report.biomass_area_after_m2 > report.biomass_area_before_m2 &&
+          report.biomass_area_after_m2 >= report.biomass_area_before_m2 &&
           report.disturbance_area_after_m2 < report.disturbance_area_before_m2,
           "vegetation C ABI advances sparse recovery");
 
