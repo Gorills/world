@@ -1,6 +1,6 @@
-# WorldSim v0.11.0 — persistent reach-aware channel transport
+# WorldSim v0.12.0 — persistent reach-aware channel transport
 
-Headless C++20 simulation core for a large persistent world. The v0.11 channel authority now uses a bounded per-reach simulation-scale residence heuristic while keeping conserved channel state inside the existing multiresolution-water authority and compound checkpoint.
+Headless C++20 simulation core for a large persistent world. v0.12 closes the uniform-channel-residence limitation with bounded per-reach transport derived from D8 length, filled-elevation slope and accumulated discharge while preserving the existing multiresolution-water authority and compound checkpoint.
 
 ## Implemented
 
@@ -119,7 +119,7 @@ storage_before + terrestrial_precipitation
 
 `storage_before` and `storage_after` include terrestrial coarse/refined stores plus all persistent L0 channel storage.
 
-The v0.11 Europe fixture observes a maximum relative daily balance residual of `5.886e-9` on the audited GCC Release run.
+The v0.12 Europe fixture observes a maximum relative daily balance residual of `5.886e-9` on the audited GCC Release run.
 
 ## Compound persistence
 
@@ -139,11 +139,11 @@ The loader validates container structure/checksums, loads World, rebuilds topolo
 
 FNV-1a is accidental-corruption detection, not cryptographic authentication. Current binary persistence uses native POD representations; cross-endian save-file portability is not guaranteed. POSIX publication is atomic under normal filesystem rename semantics, but full power-loss durability of the directory entry is not claimed because the parent directory is not explicitly fsynced after rename.
 
-See `docs/SIMULATION.md` for the v0.10 lifecycle/container contract and `docs/CHANNEL_TRANSPORT.md` for the v0.11 channel-state contract.
+See `docs/SIMULATION.md` for the v0.10 lifecycle/container contract and `docs/CHANNEL_TRANSPORT.md` for the current v0.12 channel-state contract.
 
 ## C ABI
 
-Existing C POD layouts and existing function signatures are unchanged in v0.11.
+Existing pre-v0.12 C POD layouts and existing function signatures remain compatible in v0.12.
 
 Additive read-only queries expose one L0 channel volume, total channel storage and derived per-reach transport metadata on:
 
@@ -248,7 +248,7 @@ Legacy focused solver paths remain available:
 
 - `docs/ARCHITECTURE.md` — current ownership and scheduling decisions.
 - `docs/SIMULATION.md` — unified lifecycle/checkpoint/C ABI/CLI contract introduced in v0.10 and extended by v0.11 water persistence.
-- `docs/CHANNEL_TRANSPORT.md` — v0.11 persistent channel ownership, routing and persistence contract.
+- `docs/CHANNEL_TRANSPORT.md` — current v0.12 persistent reach-aware channel ownership, routing and persistence contract.
 - `docs/WEATHER.md` — transient weather model.
 - `docs/MULTIRESOLUTION_WATER.md` — historical v0.8 conservative coarse/fine terrestrial ownership design with current-status pointers.
 - `docs/SOIL.md` — static spatial soil properties and capacity integration.
@@ -259,6 +259,7 @@ Legacy focused solver paths remain available:
 - `docs/AUDIT_v0.9.md` — selects unified simulation/checkpoint ownership.
 - `docs/AUDIT_v0.10.md` — validates the unified lifecycle and selects persistent channel transport.
 - `docs/AUDIT_v0.11.md` — validates conserved channel travel time and the v3 persistence/ABI/checkpoint integration.
+- `docs/AUDIT_v0.12.md` — validates reach-aware bounded residence, v5 semantic migration and selects derived L1 atmospheric forcing.
 
 ## Next bounded milestone
 

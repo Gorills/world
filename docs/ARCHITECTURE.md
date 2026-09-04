@@ -1,4 +1,4 @@
-# Architecture decisions — v0.11
+# Architecture decisions — v0.12
 
 ## 1. Resolution hierarchy
 
@@ -62,6 +62,7 @@ The milestone sequence is:
 - v0.9: authoritative transient weather;
 - v0.10: unified runtime ownership + compound checkpoint generation;
 - v0.11: persistent conserved channel transport inside multiresolution water.
+- v0.12: derived per-reach bounded channel residence from D8 length, filled-elevation slope and accumulated discharge; multiresolution-water persistence v5.
 
 ## 4. Static climate vs transient weather
 
@@ -84,7 +85,7 @@ Independent random values per 8192 m cell would create checkerboard forcing. Wea
 
 Transient anomalies combine previous-day autoregressive persistence, bounded four-neighbor memory and spatially coherent daily innovations.
 
-Storm intermittency uses persistent moisture anomaly plus a coherent daily storm innovation. Long-run regression anchors generated precipitation to static climate. The v0.9 calibration remains unchanged in v0.11.
+Storm intermittency uses persistent moisture anomaly plus a coherent daily storm innovation. Long-run regression anchors generated precipitation to static climate. The v0.9 calibration remains unchanged in v0.12.
 
 This remains synthetic stochastic weather scaffolding, not numerical weather prediction.
 
@@ -315,7 +316,7 @@ CTest exercises the `demo → simulation-run → simulation-resume` chain on Lin
 
 Whole-world weather, terrestrial L0 water and channel water remain compact L0 authorities; L1 terrestrial water exists only for selected refined parents and L2 persistent history remains lazy.
 
-The v0.11 Europe checkpoint CI fixture uses:
+The v0.12 Europe checkpoint CI fixture uses:
 
 - 449,208 L0 cells;
 - 64 refined water parents;
