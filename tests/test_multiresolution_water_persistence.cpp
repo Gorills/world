@@ -117,7 +117,7 @@ int main() {
     const auto duplicate_path = root.string() + ".duplicate.bin";
     const auto channel_bad_path = root.string() + ".channel-bad.bin";
     const auto channel_overflow_path = root.string() + ".channel-overflow.bin";
-    const auto legacy_v5_path = root.string() + ".legacy-source-v5.bin";
+    const auto legacy_v6_path = root.string() + ".legacy-source-v6.bin";
     const auto legacy_v2_path = root.string() + ".legacy-v2.bin";
 
     World world(config());
@@ -213,7 +213,7 @@ int main() {
     const auto first_tile_day_offset = first_parent_offset + sizeof(std::int64_t) * 2;
 
     check(read_pod_at<std::uint64_t>(bytes, channel_count_offset) == coarse_count,
-          "v5 persistence stores one channel volume per L0 cell");
+          "v6 persistence stores one channel volume per L0 cell");
     auto bad_channel = bytes;
     const double nan = std::numeric_limits<double>::quiet_NaN();
     write_pod_at(bad_channel, channel_values_offset, nan);
@@ -280,12 +280,12 @@ int main() {
         check(duplicate_rejected, "duplicate refined parent ownership is rejected");
     }
 
-    // Construct an actual v2-shaped day-zero fixture from a v5 writer: no retained channel
-    // water exists, so removing only the v5 channel block exactly represents the old semantics.
+    // Construct an actual v2-shaped day-zero fixture from a v6 writer: no retained channel
+    // water exists, so removing only the v6 channel block exactly represents the old semantics.
     auto legacy_state = make_multiresolution_water_state(world, topology);
     (void)materialize_refined_water_tile(world, topology, legacy_state, parent);
-    save_multiresolution_water_state(legacy_state, legacy_v5_path);
-    auto legacy_bytes = read_bytes(legacy_v5_path);
+    save_multiresolution_water_state(legacy_state, legacy_v6_path);
+    auto legacy_bytes = read_bytes(legacy_v6_path);
     const auto legacy_coarse_count = legacy_state.coarse_state().cells().size();
     const auto legacy_channel_count_offset =
         kCoarseCellsOffset + legacy_coarse_count * kSerializedCoarseCellBytes;
@@ -320,7 +320,7 @@ int main() {
     std::filesystem::remove(duplicate_path);
     std::filesystem::remove(channel_bad_path);
     std::filesystem::remove(channel_overflow_path);
-    std::filesystem::remove(legacy_v5_path);
+    std::filesystem::remove(legacy_v6_path);
     std::filesystem::remove(legacy_v2_path);
 
     if (failures != 0) {
