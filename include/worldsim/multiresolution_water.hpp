@@ -20,8 +20,9 @@ struct RefinedWaterTileState {
     [[nodiscard]] const DynamicHydrologyCellState& cell(CellCoord coord) const;
 };
 
-// Geometry-derived L0 channel transport. This is reconstructed from the authoritative
-// continental drainage topology and is intentionally not an independent persistence authority.
+// Topology-derived L0 channel transport. Reach length remains dominant while filled-elevation
+// slope and accumulated discharge weakly modify a bounded simulation-scale residence heuristic.
+// This is reconstructed and intentionally not an independent persistence authority.
 struct ChannelTransportProperties {
     double reach_length_m{};
     double downhill_gradient{};
