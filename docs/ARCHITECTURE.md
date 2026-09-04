@@ -1,4 +1,4 @@
-# Architecture decisions — v0.12
+# Architecture decisions — v0.13
 
 ## 1. Resolution hierarchy
 
@@ -63,6 +63,7 @@ The milestone sequence is:
 - v0.10: unified runtime ownership + compound checkpoint generation;
 - v0.11: persistent conserved channel transport inside multiresolution water.
 - v0.12: derived per-reach bounded channel residence from D8 length, filled-elevation slope and accumulated discharge; multiresolution-water persistence v5.
+- v0.13: stateless terrain-aware L1 atmospheric forcing for refined water; multiresolution-water semantic persistence v6.
 
 ## 4. Static climate vs transient weather
 
@@ -85,7 +86,7 @@ Independent random values per 8192 m cell would create checkerboard forcing. Wea
 
 Transient anomalies combine previous-day autoregressive persistence, bounded four-neighbor memory and spatially coherent daily innovations.
 
-Storm intermittency uses persistent moisture anomaly plus a coherent daily storm innovation. Long-run regression anchors generated precipitation to static climate. The v0.9 calibration remains unchanged in v0.12.
+Storm intermittency uses persistent moisture anomaly plus a coherent daily storm innovation. Long-run regression anchors generated precipitation to static climate. The v0.9 L0 calibration remains unchanged in v0.13.
 
 This remains synthetic stochastic weather scaffolding, not numerical weather prediction.
 
@@ -227,13 +228,17 @@ refined parent's next L0 channel storage
 
 That refined outlet does not cross the parent's L0 downstream edge until a later global day. Refined current-day runoff follows the same outlet-to-parent-channel rule.
 
-Refined L1 terrestrial water continues to receive its parent L0 atmospheric forcing. No L1 weather downscaling is invented without a separate elevation/orographic/sub-grid contract.
+Refined L1 terrestrial water derives forcing statelessly from its parent L0 atmospheric record and authoritative L1 terrain. Temperature applies a 6.5 C/km elevation lapse relative to the parent overlap-center reference elevation, bounded to ±8 C. PET is recomputed from that child temperature with the existing proxy.
+
+Precipitation uses a deliberately weak terrain redistribution: ±15% per km relative to the active-child area-weighted mean elevation, raw-clamped to [0.75, 1.25], then area-normalized over actual child/world overlap. The largest-overlap child receives a final representable-float residual correction so aggregate parent precipitation is conserved to the precision of the public float forcing representation, including partial boundary parents.
+
+These L1 forcing records are derived diagnostics only. They add no L1 atmospheric clock, persistence authority or mutable weather state.
 
 ## 11. Forcing boundary and compatibility helpers
 
 Hydrology consumes precipitation, mean air temperature and potential evapotranspiration.
 
-`make_weather_daily_forcing()` exposes authoritative current-day weather through that boundary. Legacy smooth climatological helpers remain available for controlled tests and old focused CLI/API paths.
+`make_weather_daily_forcing()` exposes authoritative current-day L0 weather through that boundary. `derive_refined_atmospheric_forcing()` transforms any valid parent L0 forcing record for an already-refined tile, so the same terrain contract applies to authoritative weather and controlled legacy/test forcing providers. Legacy smooth climatological helpers remain available for focused tests and compatibility paths.
 
 PET remains a simple temperature-driven approximation because the atmosphere does not yet carry radiation, humidity or wind.
 
@@ -262,9 +267,9 @@ The component formats remain versioned independently.
 
 ### Multiresolution water
 
-Format v5 stores the same authoritative water-state layout introduced by v3: world identity, hydrology parameters, exact day, complete L0 terrestrial state, one channel `double` per L0 cell and sparse refined ownership/state. Local soil capacities, topology and channel transport parameters are re-derived from World identity.
+Format v6 stores the same authoritative water-state layout introduced by v3: world identity, hydrology parameters, exact day, complete L0 terrestrial state, one channel `double` per L0 cell and sparse refined ownership/state. Local soil capacities, topology, channel transport and refined atmospheric forcing are re-derived from World identity plus current parent forcing.
 
-v3 fixed-reservoir and v4 length/slope files preserve their persisted water exactly while adopting current v5 bounded length/slope/discharge transport semantics. Valid v2 files migrate with zero channel storage because v2 had no persistent in-channel authority. Format v1 remains rejected because it predates current spatial soil-capacity semantics.
+v3-v5 files preserve their persisted water exactly while adopting current v6 derived transport/forcing semantics. Valid v2 files migrate with zero channel storage because v2 had no persistent in-channel authority. Format v1 remains rejected because it predates current spatial soil-capacity semantics.
 
 ### Weather
 
@@ -294,7 +299,9 @@ The C ABI remains opaque-handle + POD-copy based so bindings do not depend on C+
 
 `ws_simulation_state` owns the unified authority and exposes creation/destruction, global-day/ownership counts, regional/weather/water copies, day advance, refinement/aggregation, persistent disturbance and compound checkpoint save/load.
 
-The channel surface exposes read-only per-L0 storage, total channel storage and derived reach transport metadata on both the standalone multiresolution-water handle and the unified simulation handle. Arbitrary channel setters are intentionally absent.
+The channel surface exposes read-only per-L0 storage, total channel storage and derived reach transport metadata on both the standalone multiresolution-water handle and the unified simulation handle.
+
+v0.13 also exposes read-only refined forcing: standalone multiresolution water accepts an explicit parent L0 forcing record, while unified simulation returns the current authoritative-weather-derived child records. Queries require existing refined ownership and do not materialize or advance state. Arbitrary atmospheric/channel setters are intentionally absent.
 
 Older standalone World/weather/water C ABIs remain compatible for focused usage.
 
@@ -316,7 +323,7 @@ CTest exercises the `demo → simulation-run → simulation-resume` chain on Lin
 
 Whole-world weather, terrestrial L0 water and channel water remain compact L0 authorities; L1 terrestrial water exists only for selected refined parents and L2 persistent history remains lazy.
 
-The v0.12 Europe checkpoint CI fixture uses:
+The v0.13 Europe checkpoint CI fixture uses:
 
 - 449,208 L0 cells;
 - 64 refined water parents;
@@ -326,16 +333,16 @@ The v0.12 Europe checkpoint CI fixture uses:
 - exact channel equality across every L0 cell after reload;
 - exact next-day equivalence after reload, including all channel cells.
 
-One GCC Release CI observation with the bounded residence heuristic measured approximately:
+One GCC Release CI observation with v0.13 refined forcing measured approximately:
 
-- unified simulation construction: `857.664 ms`;
-- materialize 64 parents: `14.077 ms`;
-- five unified days: `790.442 ms`;
-- checkpoint save: `174.015 ms`;
-- checkpoint load including topology reconstruction: `971.509 ms`;
+- unified simulation construction: `781.069 ms`;
+- materialize 64 parents: `11.674 ms`;
+- five unified days: `664.648 ms`;
+- checkpoint save: `230.087 ms`;
+- checkpoint load including topology reconstruction: `872.025 ms`;
 - checkpoint size: `21,769,048 bytes` (`~20.76 MiB`);
 - channel storage after five warmup days: `85,711,133,025.076 m³`;
-- peak RSS: `266,788 KiB`;
+- peak RSS: `267,096 KiB`;
 - maximum relative water-balance residual: `5.886e-9`.
 
 These are CI observations, not API/performance guarantees.
@@ -355,4 +362,4 @@ Further routing work is deferred until a concrete requirement demands one or mor
 
 At that point the bounded change should alter the routing model/resolution rather than over-calibrate the current heuristic.
 
-Floodplain/wetland exchange, L1 atmospheric downscaling, lateral groundwater, multi-layer soil and geomorphic/vegetation feedback remain separate deferred systems.
+Floodplain/wetland exchange, persistent L1 atmospheric dynamics, lateral groundwater, multi-layer soil and geomorphic/vegetation feedback remain separate deferred systems.

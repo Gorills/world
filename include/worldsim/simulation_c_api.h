@@ -57,6 +57,12 @@ WORLDSIM_API int ws_simulation_copy_refined_water_cells(
     int64_t climate_y,
     ws_dynamic_hydrology_cell_state* out_cells,
     uint64_t capacity);
+WORLDSIM_API int ws_simulation_copy_refined_daily_forcing(
+    const ws_simulation_state* state,
+    int64_t climate_x,
+    int64_t climate_y,
+    ws_hydrometeorological_forcing* out_forcing,
+    uint64_t capacity);
 
 WORLDSIM_API int ws_simulation_advance_day(
     ws_simulation_state* state,

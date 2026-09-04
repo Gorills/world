@@ -4,6 +4,7 @@
 #include "soil_hydrology_internal.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -28,6 +29,13 @@ constexpr double kChannelSlopeExponent = -0.08;
 constexpr double kChannelDischargeExponent = -0.06;
 constexpr double kChannelMinResidenceDays = 0.75;
 constexpr double kChannelMaxResidenceDays = 3.0;
+// Refined atmospheric forcing remains a bounded daily simulation-scale transform. It does
+// not create L1 atmospheric state or claim physical windward/leeward precipitation dynamics.
+constexpr double kAtmosphericLapseRateCPerM = 0.0065;
+constexpr double kAtmosphericMaxTemperatureCorrectionC = 8.0;
+constexpr double kOrographicPrecipitationPerKm = 0.15;
+constexpr double kOrographicMinMultiplier = 0.75;
+constexpr double kOrographicMaxMultiplier = 1.25;
 constexpr std::uint32_t kNoDownstream = 0xFFFFFFFFu;
 constexpr std::size_t kNoIndex = std::numeric_limits<std::size_t>::max();
 
@@ -58,6 +66,18 @@ double overlap_area_m2(CellCoord coord, std::int32_t cell_m, const WorldBounds& 
     const double y1 = std::min((static_cast<double>(coord.y) + 1.0) * s, b.origin_y_m + b.height_m);
     if (!(x1 > x0) || !(y1 > y0)) return 0.0;
     return (x1 - x0) * (y1 - y0);
+}
+
+WorldPosition overlap_center(CellCoord coord, std::int32_t cell_m, const WorldBounds& b) {
+    const double s = static_cast<double>(cell_m);
+    const double x0 = std::max(static_cast<double>(coord.x) * s, b.origin_x_m);
+    const double y0 = std::max(static_cast<double>(coord.y) * s, b.origin_y_m);
+    const double x1 = std::min((static_cast<double>(coord.x) + 1.0) * s, b.origin_x_m + b.width_m);
+    const double y1 = std::min((static_cast<double>(coord.y) + 1.0) * s, b.origin_y_m + b.height_m);
+    if (!(x1 > x0) || !(y1 > y0)) {
+        throw std::logic_error("grid cell has zero world overlap");
+    }
+    return {(x0 + x1) * 0.5, (y0 + y1) * 0.5};
 }
 
 double depth_to_volume(double depth_mm, double area_m2) {
@@ -594,6 +614,159 @@ void aggregate_refined_water_tile(
     state.refined_.erase(it);
 }
 
+std::vector<HydrometeorologicalForcing> derive_refined_atmospheric_forcing(
+    const World& world,
+    const MultiresolutionWaterState& state,
+    CellCoord climate_coord,
+    const ContinentalWaterForcing& parent_forcing) {
+    validate_world_state(world, state);
+    if (!finite_non_negative(parent_forcing.precipitation_mm) ||
+        !std::isfinite(parent_forcing.mean_air_temperature_c) ||
+        !finite_non_negative(parent_forcing.potential_evapotranspiration_mm)) {
+        throw std::invalid_argument("parent atmospheric forcing contains invalid values");
+    }
+
+    const auto it = state.refined_.find(climate_coord);
+    if (it == state.refined_.end()) {
+        throw std::invalid_argument("cannot derive L1 forcing for an unrefined L0 parent");
+    }
+    const auto& refined = it->second;
+    if (refined.state.cells.size() != refined.topology.hydrology.cells.size()) {
+        throw std::logic_error("refined forcing topology/state shape is inconsistent");
+    }
+
+    std::vector<HydrometeorologicalForcing> out(refined.state.cells.size());
+    std::vector<double> areas(out.size(), 0.0);
+    std::vector<double> elevations(out.size(), 0.0);
+    double total_area = 0.0;
+    double elevation_area_sum = 0.0;
+    std::size_t correction_index = kNoIndex;
+    double correction_area = 0.0;
+
+    for (std::size_t j = 0; j < out.size(); ++j) {
+        const auto& cell = refined.state.cells[j];
+        const auto& topo = refined.topology.hydrology.cells[j];
+        out[j].coord = cell.coord;
+        if (cell.coord != topo.coord || cell.active != topo.active) {
+            throw std::logic_error("refined forcing topology/state cells are misaligned");
+        }
+        if (!cell.active || topo.ocean) continue;
+        if (!std::isfinite(topo.terrain_elevation_m)) {
+            throw std::invalid_argument("refined atmospheric forcing terrain elevation is invalid");
+        }
+        const double area = overlap_area_m2(
+            cell.coord, world.config().regional_cell_m, world.config().bounds);
+        if (!(area > 0.0) || !std::isfinite(area)) {
+            throw std::logic_error("active refined forcing cell has zero world overlap");
+        }
+        areas[j] = area;
+        elevations[j] = static_cast<double>(topo.terrain_elevation_m);
+        total_area += area;
+        elevation_area_sum += elevations[j] * area;
+        if (area > correction_area) {
+            correction_area = area;
+            correction_index = j;
+        }
+    }
+
+    // An ocean parent can be refined for topology/query symmetry but receives no terrestrial forcing.
+    if (!(total_area > 0.0)) return out;
+    if (!std::isfinite(total_area) || !std::isfinite(elevation_area_sum) ||
+        correction_index == kNoIndex) {
+        throw std::overflow_error("refined atmospheric forcing area accumulation overflow");
+    }
+
+    const double mean_elevation_m = elevation_area_sum / total_area;
+    double raw_weight_area_sum = 0.0;
+    std::vector<double> raw_weights(out.size(), 0.0);
+    for (std::size_t j = 0; j < out.size(); ++j) {
+        if (!(areas[j] > 0.0)) continue;
+        const double elevation_delta_km = (elevations[j] - mean_elevation_m) / 1000.0;
+        raw_weights[j] = std::clamp(
+            1.0 + kOrographicPrecipitationPerKm * elevation_delta_km,
+            kOrographicMinMultiplier,
+            kOrographicMaxMultiplier);
+        raw_weight_area_sum += raw_weights[j] * areas[j];
+    }
+    if (!(raw_weight_area_sum > 0.0) || !std::isfinite(raw_weight_area_sum)) {
+        throw std::overflow_error("refined atmospheric precipitation normalization overflow");
+    }
+
+    const double parent_reference_elevation_m = static_cast<double>(world.sample_elevation(
+        overlap_center(climate_coord, world.config().climate_cell_m, world.config().bounds)));
+    if (!std::isfinite(parent_reference_elevation_m)) {
+        throw std::invalid_argument("parent atmospheric reference elevation is invalid");
+    }
+    const double parent_effective_elevation_m = std::max(0.0, parent_reference_elevation_m);
+    const double normalization = total_area / raw_weight_area_sum;
+
+    for (std::size_t j = 0; j < out.size(); ++j) {
+        if (!(areas[j] > 0.0)) continue;
+        const double precipitation_mm =
+            static_cast<double>(parent_forcing.precipitation_mm) * raw_weights[j] * normalization;
+        const double child_effective_elevation_m = std::max(0.0, elevations[j]);
+        const double temperature_correction = std::clamp(
+            -kAtmosphericLapseRateCPerM *
+                (child_effective_elevation_m - parent_effective_elevation_m),
+            -kAtmosphericMaxTemperatureCorrectionC,
+            kAtmosphericMaxTemperatureCorrectionC);
+        const double temperature_c =
+            static_cast<double>(parent_forcing.mean_air_temperature_c) + temperature_correction;
+        const double pet_mm = std::max(0.0, 0.10 * (temperature_c + 5.0));
+        if (!finite_non_negative(precipitation_mm) || !std::isfinite(temperature_c) ||
+            !finite_non_negative(pet_mm) ||
+            precipitation_mm > static_cast<double>(std::numeric_limits<float>::max()) ||
+            std::abs(temperature_c) > static_cast<double>(std::numeric_limits<float>::max()) ||
+            pet_mm > static_cast<double>(std::numeric_limits<float>::max())) {
+            throw std::overflow_error("refined atmospheric forcing exceeds finite float range");
+        }
+        out[j].precipitation_mm = static_cast<float>(precipitation_mm);
+        out[j].mean_air_temperature_c = static_cast<float>(temperature_c);
+        out[j].potential_evapotranspiration_mm = static_cast<float>(pet_mm);
+    }
+
+    // Normalization is performed in double, while the public forcing ABI uses float depths.
+    // Correct the largest-overlap child to the closest representable float so the aggregate
+    // parent precipitation volume is conserved to float forcing precision, including partial
+    // world-boundary parents.
+    const double target_depth_area =
+        static_cast<double>(parent_forcing.precipitation_mm) * total_area;
+    double actual_depth_area = 0.0;
+    for (std::size_t j = 0; j < out.size(); ++j) {
+        actual_depth_area += static_cast<double>(out[j].precipitation_mm) * areas[j];
+    }
+    const double residual = target_depth_area - actual_depth_area;
+    const double desired = static_cast<double>(out[correction_index].precipitation_mm) +
+                           residual / correction_area;
+    if (!std::isfinite(desired) || desired < 0.0 ||
+        desired > static_cast<double>(std::numeric_limits<float>::max())) {
+        throw std::overflow_error("refined atmospheric precipitation residual is not representable");
+    }
+
+    const float base = static_cast<float>(desired);
+    const std::array<float, 3> candidates{
+        base,
+        std::nextafter(base, std::numeric_limits<float>::infinity()),
+        std::nextafter(base, -std::numeric_limits<float>::infinity())};
+    float best = out[correction_index].precipitation_mm;
+    double best_error = std::numeric_limits<double>::infinity();
+    const double without_correction =
+        actual_depth_area -
+        static_cast<double>(out[correction_index].precipitation_mm) * correction_area;
+    for (const float candidate : candidates) {
+        if (!finite_non_negative(candidate)) continue;
+        const double candidate_total =
+            without_correction + static_cast<double>(candidate) * correction_area;
+        const double error = std::abs(target_depth_area - candidate_total);
+        if (error < best_error) {
+            best_error = error;
+            best = candidate;
+        }
+    }
+    out[correction_index].precipitation_mm = best;
+    return out;
+}
+
 ContinentalWaterStepReport advance_multiresolution_water_day(
     const World& world,
     MultiresolutionWaterState& state,
@@ -776,18 +949,8 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
         detailed.simulated_days = 0.0;
         detailed.cells = owned.state.cells;
 
-        std::vector<HydrometeorologicalForcing> detailed_forcing;
-        detailed_forcing.reserve(detailed.cells.size());
-        for (std::size_t j = 0; j < detailed.cells.size(); ++j) {
-            HydrometeorologicalForcing child_forcing;
-            child_forcing.coord = detailed.cells[j].coord;
-            if (detailed.cells[j].active && !owned.topology.hydrology.cells[j].ocean) {
-                child_forcing.precipitation_mm = forcing[i].precipitation_mm;
-                child_forcing.mean_air_temperature_c = forcing[i].mean_air_temperature_c;
-                child_forcing.potential_evapotranspiration_mm = forcing[i].potential_evapotranspiration_mm;
-            }
-            detailed_forcing.push_back(child_forcing);
-        }
+        const auto detailed_forcing = derive_refined_atmospheric_forcing(
+            world, state, coord, forcing[i]);
 
         std::vector<ExternalHydrologyInflow> external;
         const auto& by_cell = ingress.at(coord);

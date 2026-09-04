@@ -107,6 +107,16 @@ void copy_channel_transport(
     out.residence_days = in.residence_days;
     out.release_fraction_per_day = in.release_fraction_per_day;
 }
+
+void copy_refined_forcing(
+    const worldsim::HydrometeorologicalForcing& in,
+    ws_hydrometeorological_forcing& out) {
+    out.cell_x = in.coord.x;
+    out.cell_y = in.coord.y;
+    out.precipitation_mm = in.precipitation_mm;
+    out.mean_air_temperature_c = in.mean_air_temperature_c;
+    out.potential_evapotranspiration_mm = in.potential_evapotranspiration_mm;
+}
 } // namespace
 
 extern "C" {
@@ -258,6 +268,33 @@ int ws_multiresolution_water_make_smooth_daily_forcing(
             out_forcing[i].precipitation_mm = forcing[i].precipitation_mm;
             out_forcing[i].mean_air_temperature_c = forcing[i].mean_air_temperature_c;
             out_forcing[i].potential_evapotranspiration_mm = forcing[i].potential_evapotranspiration_mm;
+        }
+    });
+}
+
+int ws_multiresolution_water_derive_refined_forcing(
+    ws_world* world,
+    const ws_multiresolution_water_state* state,
+    int64_t climate_x,
+    int64_t climate_y,
+    const ws_continental_water_forcing* parent_forcing,
+    ws_hydrometeorological_forcing* out_forcing,
+    uint64_t capacity) {
+    return guarded([&] {
+        if (!world || !state || !parent_forcing || !out_forcing) {
+            throw std::invalid_argument("world/state/parent_forcing/out_forcing is null");
+        }
+        const worldsim::ContinentalWaterForcing parent{
+            parent_forcing->precipitation_mm,
+            parent_forcing->mean_air_temperature_c,
+            parent_forcing->potential_evapotranspiration_mm};
+        const auto derived = worldsim::derive_refined_atmospheric_forcing(
+            world->impl, state->impl, {climate_x, climate_y}, parent);
+        if (capacity < derived.size()) {
+            throw std::invalid_argument("multiresolution refined forcing output capacity is too small");
+        }
+        for (std::size_t i = 0; i < derived.size(); ++i) {
+            copy_refined_forcing(derived[i], out_forcing[i]);
         }
     });
 }

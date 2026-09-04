@@ -34,6 +34,11 @@ public:
     [[nodiscard]] const WeatherState& weather() const noexcept { return weather_; }
     [[nodiscard]] const MultiresolutionWaterState& water() const noexcept { return water_; }
 
+    // Read-only current-day L1 forcing for an already-refined parent. This does not advance
+    // weather, mutate water or materialize persistent state.
+    [[nodiscard]] std::vector<HydrometeorologicalForcing> refined_daily_forcing(
+        CellCoord climate_coord) const;
+
     [[nodiscard]] WeatherWaterStepReport advance_day();
 
     [[nodiscard]] const RefinedWaterTileState& materialize_refined_water_tile(

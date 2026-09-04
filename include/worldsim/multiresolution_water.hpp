@@ -74,6 +74,8 @@ private:
     friend const RefinedWaterTileState& materialize_refined_water_tile(
         const World&, const ContinentalHydrologyResult&, MultiresolutionWaterState&, CellCoord);
     friend void aggregate_refined_water_tile(const World&, MultiresolutionWaterState&, CellCoord);
+    friend std::vector<HydrometeorologicalForcing> derive_refined_atmospheric_forcing(
+        const World&, const MultiresolutionWaterState&, CellCoord, const ContinentalWaterForcing&);
     friend ContinentalWaterStepReport advance_multiresolution_water_day(
         const World&, MultiresolutionWaterState&, const std::vector<ContinentalWaterForcing>&);
     friend void save_multiresolution_water_state(
@@ -97,6 +99,15 @@ void aggregate_refined_water_tile(
     const World& world,
     MultiresolutionWaterState& state,
     CellCoord climate_coord);
+
+// Stateless L0 -> L1 atmospheric forcing transform for an already-refined terrestrial parent.
+// Weather remains L0-authoritative: this derives child temperature/PET from local terrain and
+// redistributes parent precipitation conservatively over actual child/world overlap area.
+[[nodiscard]] std::vector<HydrometeorologicalForcing> derive_refined_atmospheric_forcing(
+    const World& world,
+    const MultiresolutionWaterState& state,
+    CellCoord climate_coord,
+    const ContinentalWaterForcing& parent_forcing);
 
 [[nodiscard]] ContinentalWaterStepReport advance_multiresolution_water_day(
     const World& world,

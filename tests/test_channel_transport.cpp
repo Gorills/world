@@ -210,64 +210,64 @@ int main() {
           "reach-aware channel routing conserves water");
 
     const auto root = std::filesystem::temp_directory_path() / "worldsim_channel_transport";
-    const auto v5_path = root.string() + ".v5.bin";
+    const auto v6_path = root.string() + ".v6.bin";
     const auto v4_path = root.string() + ".v4.bin";
     const auto v3_path = root.string() + ".v3.bin";
     auto persistence_source = make_multiresolution_water_state(world, topo, routing_parameters());
     (void)advance_multiresolution_water_day(world, persistence_source, pulse);
-    save_multiresolution_water_state(persistence_source, v5_path);
-    check(read_version(v5_path) == 5u,
-          "bounded channel heuristic persistence writes semantic format v5");
+    save_multiresolution_water_state(persistence_source, v6_path);
+    check(read_version(v6_path) == 6u,
+          "bounded channel heuristic persistence writes semantic format v6");
     std::filesystem::copy_file(
-        v5_path, v4_path, std::filesystem::copy_options::overwrite_existing);
+        v6_path, v4_path, std::filesystem::copy_options::overwrite_existing);
     rewrite_version(v4_path, 4u);
     std::filesystem::copy_file(
-        v5_path, v3_path, std::filesystem::copy_options::overwrite_existing);
+        v6_path, v3_path, std::filesystem::copy_options::overwrite_existing);
     rewrite_version(v3_path, 3u);
 
-    auto loaded_v5 = load_multiresolution_water_state(world, topo, v5_path);
+    auto loaded_v6 = load_multiresolution_water_state(world, topo, v6_path);
     auto migrated_v4 = load_multiresolution_water_state(world, topo, v4_path);
     auto migrated_v3 = load_multiresolution_water_state(world, topo, v3_path);
     bool migration_exact =
-        loaded_v5.simulated_day() == migrated_v4.simulated_day() &&
-        loaded_v5.simulated_day() == migrated_v3.simulated_day();
+        loaded_v6.simulated_day() == migrated_v4.simulated_day() &&
+        loaded_v6.simulated_day() == migrated_v3.simulated_day();
     for (const auto& topo_cell : topo.cells) {
         migration_exact = migration_exact &&
-            loaded_v5.channel_storage_m3(topo_cell.coord) ==
+            loaded_v6.channel_storage_m3(topo_cell.coord) ==
                 migrated_v4.channel_storage_m3(topo_cell.coord) &&
-            loaded_v5.channel_storage_m3(topo_cell.coord) ==
+            loaded_v6.channel_storage_m3(topo_cell.coord) ==
                 migrated_v3.channel_storage_m3(topo_cell.coord) &&
             same_transport(
-                loaded_v5.channel_transport(topo_cell.coord),
+                loaded_v6.channel_transport(topo_cell.coord),
                 migrated_v4.channel_transport(topo_cell.coord)) &&
             same_transport(
-                loaded_v5.channel_transport(topo_cell.coord),
+                loaded_v6.channel_transport(topo_cell.coord),
                 migrated_v3.channel_transport(topo_cell.coord));
     }
     check(migration_exact,
-          "v3/v4 migration preserves water state and derives identical current v5 transport");
+          "v3/v4 migration preserves water state and derives identical current v6 transport");
 
-    const auto v5_next = advance_multiresolution_water_day(world, loaded_v5, dry);
+    const auto v6_next = advance_multiresolution_water_day(world, loaded_v6, dry);
     const auto v4_next = advance_multiresolution_water_day(world, migrated_v4, dry);
     const auto v3_next = advance_multiresolution_water_day(world, migrated_v3, dry);
     bool future_exact =
-        v5_next.storage_after_m3 == v4_next.storage_after_m3 &&
-        v5_next.storage_after_m3 == v3_next.storage_after_m3 &&
-        v5_next.terminal_outflow_m3 == v4_next.terminal_outflow_m3 &&
-        v5_next.terminal_outflow_m3 == v3_next.terminal_outflow_m3 &&
-        v5_next.water_balance_error_m3 == v4_next.water_balance_error_m3 &&
-        v5_next.water_balance_error_m3 == v3_next.water_balance_error_m3;
+        v6_next.storage_after_m3 == v4_next.storage_after_m3 &&
+        v6_next.storage_after_m3 == v3_next.storage_after_m3 &&
+        v6_next.terminal_outflow_m3 == v4_next.terminal_outflow_m3 &&
+        v6_next.terminal_outflow_m3 == v3_next.terminal_outflow_m3 &&
+        v6_next.water_balance_error_m3 == v4_next.water_balance_error_m3 &&
+        v6_next.water_balance_error_m3 == v3_next.water_balance_error_m3;
     for (const auto& topo_cell : topo.cells) {
         future_exact = future_exact &&
-            loaded_v5.channel_storage_m3(topo_cell.coord) ==
+            loaded_v6.channel_storage_m3(topo_cell.coord) ==
                 migrated_v4.channel_storage_m3(topo_cell.coord) &&
-            loaded_v5.channel_storage_m3(topo_cell.coord) ==
+            loaded_v6.channel_storage_m3(topo_cell.coord) ==
                 migrated_v3.channel_storage_m3(topo_cell.coord);
     }
     check(future_exact,
-          "migrated checkpoints follow the same deterministic v5 future evolution");
+          "migrated checkpoints follow the same deterministic v6 future evolution");
 
-    std::filesystem::remove(v5_path);
+    std::filesystem::remove(v6_path);
     std::filesystem::remove(v4_path);
     std::filesystem::remove(v3_path);
 

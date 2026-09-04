@@ -18,7 +18,7 @@ namespace worldsim {
 namespace {
 
 constexpr std::array<char, 8> kMagic{'W','S','M','W','0','0','0','1'};
-constexpr std::uint32_t kFormatVersion = 5;
+constexpr std::uint32_t kFormatVersion = 6;
 constexpr double kMaxWaterDepthMm = 1.0e30;
 
 bool same_bounds(const WorldBounds& a, const WorldBounds& b) {
@@ -327,7 +327,8 @@ MultiresolutionWaterState load_multiresolution_water_state(
         throw std::runtime_error(
             "multiresolution water file v1 uses uniform soil-capacity semantics and is not compatible with v2+");
     }
-    if (version != 2u && version != 3u && version != 4u && version != kFormatVersion) {
+    if (version != 2u && version != 3u && version != 4u && version != 5u &&
+        version != kFormatVersion) {
         throw std::runtime_error("unsupported multiresolution water file version");
     }
 
@@ -337,10 +338,10 @@ MultiresolutionWaterState load_multiresolution_water_state(
         throw std::runtime_error("multiresolution water file belongs to a different world");
     }
     const auto parameters = read_parameters(in);
-    // v3 introduced persisted channel storage; v4 introduced reach-aware length/slope transport.
-    // Neither serialized transport metadata, and v5 keeps the same water-state layout while adding
-    // a bounded weak discharge dependence. Migration preserves persisted water exactly and derives
-    // current transport semantics from this authoritative topology.
+    // v3 introduced persisted channel storage; v4/v5 changed derived channel transport semantics.
+    // v6 keeps that same authoritative byte layout and adds stateless refined atmospheric forcing.
+    // No derived transport/forcing metadata is serialized: migration preserves persisted water
+    // exactly while future refined evolution adopts the current v6 deterministic forcing transform.
     auto state = make_multiresolution_water_state(world, topology, parameters);
 
     std::int64_t day{};

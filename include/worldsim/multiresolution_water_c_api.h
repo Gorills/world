@@ -63,6 +63,14 @@ WORLDSIM_API int ws_multiresolution_water_make_smooth_daily_forcing(
     const ws_multiresolution_water_state* state,
     ws_continental_water_forcing* out_forcing,
     uint64_t capacity);
+WORLDSIM_API int ws_multiresolution_water_derive_refined_forcing(
+    ws_world* world,
+    const ws_multiresolution_water_state* state,
+    int64_t climate_x,
+    int64_t climate_y,
+    const ws_continental_water_forcing* parent_forcing,
+    ws_hydrometeorological_forcing* out_forcing,
+    uint64_t capacity);
 WORLDSIM_API int ws_multiresolution_water_advance_day(
     ws_world* world,
     ws_multiresolution_water_state* state,
