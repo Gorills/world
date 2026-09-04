@@ -65,7 +65,7 @@ struct RegionalSample {
     float slope{};               // dimensionless rise/run approximation
     float terrain_roughness{};   // 0..1
     float bedrock_hardness{};    // 0..1, static geological proxy
-    float forest_potential{};    // 0..1, placeholder for later vegetation system
+    float forest_potential{};    // 0..1 static local vegetation carrying-potential proxy
 };
 
 // Deterministic static soil modifiers. They scale the existing hydrology parameter values
