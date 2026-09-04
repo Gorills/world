@@ -1,4 +1,4 @@
-# Authoritative daily weather (v0.9)
+# Authoritative L0 weather and derived L1 forcing (v0.13)
 
 ## Purpose
 
@@ -108,7 +108,33 @@ The coupled path prepares the complete current-day forcing and next weather stat
 
 `ContinentalWaterState` is the older coarse-only v0.5 C++ API and does not store its construction parameter set internally. Its weather-coupled helper therefore requires an explicit `DynamicHydrologyParameters` argument; callers must pass the same parameter set used to construct the state. The multiresolution state already owns its hydrology parameters, so `advance_weather_multiresolution_water_day()` has no external water-parameter argument.
 
-For a refined L0 water parent, every active L1 child receives that parent day's L0 atmospheric forcing. v0.9 deliberately does not invent 1 km weather downscaling before there is a contract for elevation/orographic and sub-grid precipitation effects.
+For a refined L0 water parent, v0.13 derives the 64-slot L1 forcing vector without creating L1 atmospheric state.
+
+For active terrestrial children:
+
+```text
+temperature_correction =
+    clamp(-0.0065 × (child_effective_elevation_m - parent_effective_elevation_m),
+          -8, +8)
+
+child_temperature = parent_temperature + temperature_correction
+child_PET         = max(0, 0.10 × (child_temperature + 5))
+```
+
+Parent reference elevation uses the actual L0/world overlap center, matching the L0 weather elevation convention. Negative elevations are floored at zero for the lapse correction.
+
+Precipitation uses a weak terrain redistribution:
+
+```text
+raw_weight = clamp(
+    1 + 0.15 × (child_elevation_m - active_child_mean_elevation_m) / 1000,
+    0.75,
+    1.25)
+```
+
+Raw weights are normalized by actual active-child/world overlap area. After float conversion, the largest-overlap child is adjusted to the closest representable value that minimizes the parent-volume residual. The result conserves the parent precipitation volume to public float-forcing precision, including partial boundary parents.
+
+This is a deterministic simulation-scale terrain heuristic. It is not a windward/leeward precipitation model and it does not introduce a second weather clock or persistence authority.
 
 ## Persistence
 
@@ -134,7 +160,7 @@ The loader rejects:
 - truncated files;
 - unexpected trailing bytes.
 
-Weather and multiresolution-water persistence remain separate files. Applications that require an atomic disk checkpoint across both objects must coordinate those two writes externally; v0.9 does not introduce a compound checkpoint container.
+Weather and multiresolution-water retain separate component serializers. Since v0.10, `SimulationState` compound checkpoints coordinate World + Weather + Multiresolution Water as one validated generation. v0.13 adds no L1 weather bytes: refined forcing is reconstructed from authoritative weather, terrain and refined ownership.
 
 ## C ABI
 
@@ -145,7 +171,8 @@ It exposes:
 - weather create/destroy;
 - exact day and cell count;
 - one-cell weather sampling;
-- current daily forcing copy;
+- current daily L0 forcing copy;
+- read-only derived L1 forcing through the unified simulation C ABI for an already-refined parent;
 - standalone weather advance;
 - atomic weather + multiresolution-water daily advance;
 - weather save/load;
@@ -176,8 +203,8 @@ v0.9 weather does not yet model:
 - radiation/cloud physics;
 - fronts, cyclogenesis or numerical atmospheric dynamics;
 - data assimilation;
-- L1 or L2 atmospheric state;
-- orographic precipitation downscaling;
+- persistent L1 or L2 atmospheric state;
+- physical windward/leeward orographic precipitation;
 - climate change or long-term climate drift.
 
 Static climate is still synthetic. Weather is a coherent stochastic transient layer around that synthetic baseline.
