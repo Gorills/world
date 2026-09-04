@@ -6,6 +6,7 @@
 #include <exception>
 #include <memory>
 #include <string>
+#include <vector>
 
 static_assert(WS_MAX_HYDROLOGY_CELLS == worldsim::kMaxHydrologyCells);
 static_assert(WS_MAX_CONTINENTAL_HYDROLOGY_CELLS == worldsim::kMaxContinentalHydrologyCells);
@@ -60,6 +61,18 @@ int guarded(F&& fn) {
         g_last_error = "unknown WorldSim error";
         return -1;
     }
+}
+
+void copy_vegetation_report(
+    const worldsim::VegetationStepReport& in,
+    ws_vegetation_step_report& out) {
+    out.patch_count = in.patch_count;
+    out.land_cell_count = in.land_cell_count;
+    out.land_area_m2 = in.land_area_m2;
+    out.biomass_area_before_m2 = in.biomass_area_before_m2;
+    out.biomass_area_after_m2 = in.biomass_area_after_m2;
+    out.disturbance_area_before_m2 = in.disturbance_area_before_m2;
+    out.disturbance_area_after_m2 = in.disturbance_area_after_m2;
 }
 
 worldsim::DynamicHydrologyParameters dynamic_parameters_from_c(const ws_dynamic_hydrology_parameters* p) {
@@ -136,6 +149,50 @@ int ws_world_copy_local_patch(ws_world* world, int64_t region_x, int64_t region_
             out_cells[i].forest_potential = patch.cells[i].forest_potential;
             out_cells[i].disturbance = patch.cells[i].disturbance;
         }
+    });
+}
+
+int ws_world_copy_local_vegetation(
+    ws_world* world,
+    int64_t region_x,
+    int64_t region_y,
+    ws_local_vegetation_cell* out_cells,
+    uint64_t capacity) {
+    return guarded([&] {
+        if (!world || !out_cells) throw std::invalid_argument("world/out_cells is null");
+        if (capacity < WS_LOCAL_PATCH_CELL_COUNT) {
+            throw std::invalid_argument("local vegetation output capacity must be at least 256");
+        }
+        const auto& patch = world->impl.materialize_local_patch({region_x, region_y});
+        for (std::size_t i = 0; i < worldsim::kLocalCellCount; ++i) {
+            out_cells[i].local_x = static_cast<uint32_t>(i % worldsim::kLocalCellsPerAxis);
+            out_cells[i].local_y = static_cast<uint32_t>(i / worldsim::kLocalCellsPerAxis);
+            out_cells[i].forest_potential = patch.cells[i].forest_potential;
+            out_cells[i].disturbance = patch.cells[i].disturbance;
+            out_cells[i].vegetation_biomass = patch.cells[i].vegetation_biomass;
+        }
+    });
+}
+
+int ws_world_advance_materialized_vegetation_day(
+    ws_world* world,
+    const ws_vegetation_forcing* forcing,
+    uint64_t forcing_count,
+    ws_vegetation_step_report* out_report) {
+    return guarded([&] {
+        if (!world || !out_report || (!forcing && forcing_count != 0)) {
+            throw std::invalid_argument("world/forcing/out_report is null");
+        }
+        std::vector<worldsim::VegetationForcing> input;
+        input.reserve(static_cast<std::size_t>(forcing_count));
+        for (uint64_t i = 0; i < forcing_count; ++i) {
+            input.push_back({
+                {forcing[i].regional_x, forcing[i].regional_y},
+                forcing[i].mean_air_temperature_c,
+                forcing[i].soil_saturation});
+        }
+        const auto report = world->impl.advance_materialized_vegetation_day(input);
+        copy_vegetation_report(report, *out_report);
     });
 }
 
