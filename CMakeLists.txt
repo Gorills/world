@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(worldsim VERSION 0.12.0 LANGUAGES C CXX)
+project(worldsim VERSION 0.13.0 LANGUAGES C CXX)
 
 option(WORLDSIM_BUILD_TESTS "Build WorldSim tests" ON)
 
@@ -125,6 +125,12 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_channel_transport_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_channel_transport_tests COMMAND worldsim_channel_transport_tests)
 
+    add_executable(worldsim_refined_atmospheric_forcing_tests
+        tests/test_refined_atmospheric_forcing.cpp)
+    target_link_libraries(worldsim_refined_atmospheric_forcing_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_refined_atmospheric_forcing_tests
+        COMMAND worldsim_refined_atmospheric_forcing_tests)
+
     add_executable(worldsim_refined_water_index_tests tests/test_refined_water_index.cpp)
     target_link_libraries(worldsim_refined_water_index_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_refined_water_index_tests COMMAND worldsim_refined_water_index_tests)
@@ -168,6 +174,13 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_simulation_c_api_tests PRIVATE worldsim::worldsim)
     set_target_properties(worldsim_simulation_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
     add_test(NAME worldsim_simulation_c_api_tests COMMAND worldsim_simulation_c_api_tests)
+
+    add_executable(worldsim_refined_atmospheric_forcing_c_api_tests
+        tests/test_refined_atmospheric_forcing_c_api.c)
+    target_link_libraries(worldsim_refined_atmospheric_forcing_c_api_tests PRIVATE worldsim::worldsim)
+    set_target_properties(worldsim_refined_atmospheric_forcing_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
+    add_test(NAME worldsim_refined_atmospheric_forcing_c_api_tests
+        COMMAND worldsim_refined_atmospheric_forcing_c_api_tests)
 
     add_test(NAME worldsim_cli_simulation_demo
         COMMAND worldsim_cli demo worldsim_cli_simulation.ws)
