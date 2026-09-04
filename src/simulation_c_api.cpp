@@ -145,6 +145,16 @@ void copy_channel_transport(
     out.residence_days = in.residence_days;
     out.release_fraction_per_day = in.release_fraction_per_day;
 }
+
+void copy_refined_forcing(
+    const worldsim::HydrometeorologicalForcing& in,
+    ws_hydrometeorological_forcing& out) {
+    out.cell_x = in.coord.x;
+    out.cell_y = in.coord.y;
+    out.precipitation_mm = in.precipitation_mm;
+    out.mean_air_temperature_c = in.mean_air_temperature_c;
+    out.potential_evapotranspiration_mm = in.potential_evapotranspiration_mm;
+}
 } // namespace
 
 extern "C" {
@@ -298,6 +308,24 @@ int ws_simulation_copy_refined_water_cells(
         }
         for (std::size_t i = 0; i < tile.cells.size(); ++i) {
             copy_refined_cell(tile.cells[i], out_cells[i]);
+        }
+    });
+}
+
+int ws_simulation_copy_refined_daily_forcing(
+    const ws_simulation_state* state,
+    int64_t climate_x,
+    int64_t climate_y,
+    ws_hydrometeorological_forcing* out_forcing,
+    uint64_t capacity) {
+    return guarded([&] {
+        if (!state || !out_forcing) throw std::invalid_argument("state/out_forcing is null");
+        const auto forcing = state->impl.refined_daily_forcing({climate_x, climate_y});
+        if (capacity < forcing.size()) {
+            throw std::invalid_argument("simulation refined forcing output capacity is too small");
+        }
+        for (std::size_t i = 0; i < forcing.size(); ++i) {
+            copy_refined_forcing(forcing[i], out_forcing[i]);
         }
     });
 }
