@@ -9,6 +9,11 @@ extern "C" {
 
 typedef struct ws_simulation_state ws_simulation_state;
 
+typedef struct ws_simulation_day_report_v2 {
+    ws_weather_water_step_report environment;
+    ws_vegetation_step_report vegetation;
+} ws_simulation_day_report_v2;
+
 WORLDSIM_API ws_simulation_state* ws_simulation_create(
     const ws_world_config* config,
     const ws_weather_parameters* weather_parameters,
@@ -63,10 +68,19 @@ WORLDSIM_API int ws_simulation_copy_refined_daily_forcing(
     int64_t climate_y,
     ws_hydrometeorological_forcing* out_forcing,
     uint64_t capacity);
+WORLDSIM_API int ws_simulation_copy_local_vegetation(
+    const ws_simulation_state* state,
+    int64_t region_x,
+    int64_t region_y,
+    ws_local_vegetation_cell* out_cells,
+    uint64_t capacity);
 
 WORLDSIM_API int ws_simulation_advance_day(
     ws_simulation_state* state,
     ws_weather_water_step_report* out_report);
+WORLDSIM_API int ws_simulation_advance_day_v2(
+    ws_simulation_state* state,
+    ws_simulation_day_report_v2* out_report);
 WORLDSIM_API int ws_simulation_materialize_refined_water_tile(
     ws_simulation_state* state,
     int64_t climate_x,
