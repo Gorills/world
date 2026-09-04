@@ -1,4 +1,4 @@
-# Architecture decisions — v0.11
+# Architecture decisions — v0.12
 
 ## 1. Resolution hierarchy
 
@@ -62,6 +62,7 @@ The milestone sequence is:
 - v0.9: authoritative transient weather;
 - v0.10: unified runtime ownership + compound checkpoint generation;
 - v0.11: persistent conserved channel transport inside multiresolution water.
+- v0.12: derived per-reach bounded channel residence from D8 length, filled-elevation slope and accumulated discharge; multiresolution-water persistence v5.
 
 ## 4. Static climate vs transient weather
 
