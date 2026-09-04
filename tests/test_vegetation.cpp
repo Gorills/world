@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <iterator>
 #include <limits>
 #include <stdexcept>
 #include <vector>
@@ -103,17 +104,32 @@ int main() {
     const auto& initial = world.materialize_local_patch(region);
     check(world.materialized_patch_count() == 1,
           "vegetation materialization creates one sparse L2 patch");
-    check(initial.cells[0].vegetation_biomass == initial.cells[0].forest_potential,
-          "new terrestrial local cell starts at forest potential biomass");
+    std::size_t target_index = 0;
+    for (std::size_t i = 1; i < kLocalCellCount; ++i) {
+        if (initial.cells[i].forest_potential > initial.cells[target_index].forest_potential) {
+            target_index = i;
+        }
+    }
+    check(initial.cells[target_index].forest_potential > 0.0f &&
+          initial.cells[target_index].vegetation_biomass ==
+              initial.cells[target_index].forest_potential,
+          "new terrestrial local vegetation initializes at positive local potential");
 
-    const float potential = initial.cells[0].forest_potential;
-    check(world.disturb_surface({0.0, 0.0}, {64.0, 64.0}, 0.8f) == 1,
-          "surface disturbance affects exactly one local vegetation cell");
+    const std::size_t target_x = target_index % kLocalCellsPerAxis;
+    const std::size_t target_y = target_index / kLocalCellsPerAxis;
+    const double local = static_cast<double>(world.config().local_cell_m);
+    const WorldPosition disturb_min{
+        static_cast<double>(target_x) * local,
+        static_cast<double>(target_y) * local};
+    const WorldPosition disturb_max{disturb_min.x_m + local, disturb_min.y_m + local};
+    const float potential = initial.cells[target_index].forest_potential;
+    check(world.disturb_surface(disturb_min, disturb_max, 0.8f) == 1,
+          "surface disturbance affects exactly one selected local vegetation cell");
     const auto* disturbed = world.find_local_patch(region);
     check(disturbed != nullptr, "disturbed vegetation patch remains materialized");
     if (!disturbed) return 1;
-    check(disturbed->cells[0].disturbance == 0.8f &&
-          disturbed->cells[0].vegetation_biomass <= potential * 0.2f + 1e-6f,
+    check(disturbed->cells[target_index].disturbance == 0.8f &&
+          disturbed->cells[target_index].vegetation_biomass <= potential * 0.2f + 1e-6f,
           "disturbance immediately suppresses live biomass");
 
     const auto before_warm = disturbed->cells;
@@ -125,23 +141,23 @@ int main() {
     check(warm_report.patch_count == 1 && warm_report.land_cell_count == kLocalCellCount &&
           warm_report.land_area_m2 == 1024.0 * 1024.0,
           "vegetation report covers exactly the materialized terrestrial patch");
-    check(after_warm->cells[0].disturbance < before_warm[0].disturbance,
+    check(after_warm->cells[target_index].disturbance < before_warm[target_index].disturbance,
           "persistent disturbance decays during vegetation day");
-    check(after_warm->cells[0].vegetation_biomass > before_warm[0].vegetation_biomass,
+    check(after_warm->cells[target_index].vegetation_biomass > before_warm[target_index].vegetation_biomass,
           "warm moist forcing recovers disturbed biomass");
     check(warm_report.biomass_area_after_m2 > warm_report.biomass_area_before_m2 &&
           warm_report.disturbance_area_after_m2 < warm_report.disturbance_area_before_m2,
           "vegetation report records recovery and disturbance decay");
 
-    const float biomass_before_cold = after_warm->cells[0].vegetation_biomass;
-    const float disturbance_before_cold = after_warm->cells[0].disturbance;
+    const float biomass_before_cold = after_warm->cells[target_index].vegetation_biomass;
+    const float disturbance_before_cold = after_warm->cells[target_index].disturbance;
     const VegetationForcing cold_dry{{0, 0}, -20.0f, 0.0f};
     (void)world.advance_materialized_vegetation_day({cold_dry});
     const auto* after_cold = world.find_local_patch(region);
     check(after_cold != nullptr, "cold vegetation advance preserves patch");
     if (!after_cold) return 1;
-    check(after_cold->cells[0].vegetation_biomass == biomass_before_cold &&
-          after_cold->cells[0].disturbance < disturbance_before_cold,
+    check(after_cold->cells[target_index].vegetation_biomass == biomass_before_cold &&
+          after_cold->cells[target_index].disturbance < disturbance_before_cold,
           "cold dry day stalls biomass recovery while disturbance still decays");
     check(world.materialized_patch_count() == 1,
           "vegetation advance never materializes additional L2 patches");
@@ -191,7 +207,7 @@ int main() {
 
     World legacy_source(config());
     (void)legacy_source.materialize_local_patch(region);
-    check(legacy_source.disturb_surface({0.0, 0.0}, {64.0, 64.0}, 0.6f) == 1,
+    check(legacy_source.disturb_surface(disturb_min, disturb_max, 0.6f) == 1,
           "legacy migration fixture records disturbance");
     const auto legacy_v3 = temp / "worldsim_vegetation_legacy_source_v3.ws";
     const auto legacy_v2 = temp / "worldsim_vegetation_legacy_v2.ws";
@@ -205,8 +221,8 @@ int main() {
     check(migrated_patch != nullptr && legacy_patch != nullptr,
           "v2 vegetation migration preserves materialized patch");
     if (migrated_patch && legacy_patch) {
-        const auto& m = migrated_patch->cells[0];
-        const auto& old = legacy_patch->cells[0];
+        const auto& m = migrated_patch->cells[target_index];
+        const auto& old = legacy_patch->cells[target_index];
         check(m.elevation_m == old.elevation_m &&
               m.terrain_roughness == old.terrain_roughness &&
               m.forest_potential == old.forest_potential &&
