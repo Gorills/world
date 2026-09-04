@@ -18,7 +18,7 @@ namespace worldsim {
 namespace {
 
 constexpr std::array<char, 8> kMagic{'W','S','M','W','0','0','0','1'};
-constexpr std::uint32_t kFormatVersion = 4;
+constexpr std::uint32_t kFormatVersion = 5;
 constexpr double kMaxWaterDepthMm = 1.0e30;
 
 bool same_bounds(const WorldBounds& a, const WorldBounds& b) {
@@ -255,7 +255,7 @@ void save_multiresolution_water_state(
         write_cell(out, cell);
     }
 
-    // v4 intentionally keeps the v3 storage layout. Reach geometry is derived from the
+    // v5 intentionally keeps the v3/v4 storage layout. Reach transport is derived from the
     // authoritative topology on create/load rather than serialized as a second authority.
     write_pod(out, coarse_count);
     for (std::size_t i = 0; i < state.channel_storage_m3_.size(); ++i) {
@@ -327,7 +327,7 @@ MultiresolutionWaterState load_multiresolution_water_state(
         throw std::runtime_error(
             "multiresolution water file v1 uses uniform soil-capacity semantics and is not compatible with v2+");
     }
-    if (version != 2u && version != 3u && version != kFormatVersion) {
+    if (version != 2u && version != 3u && version != 4u && version != kFormatVersion) {
         throw std::runtime_error("unsupported multiresolution water file version");
     }
 
@@ -337,9 +337,10 @@ MultiresolutionWaterState load_multiresolution_water_state(
         throw std::runtime_error("multiresolution water file belongs to a different world");
     }
     const auto parameters = read_parameters(in);
-    // v3 persisted the same water state layout as v4 but used a fixed one-day channel reservoir.
-    // No transport metadata existed in the file, so v3 migration preserves every persisted byte
-    // of water state while deriving the v4 reach-aware transport from this authoritative topology.
+    // v3 introduced persisted channel storage; v4 introduced reach-aware length/slope transport.
+    // Neither serialized transport metadata, and v5 keeps the same water-state layout while adding
+    // a bounded weak discharge dependence. Migration preserves persisted water exactly and derives
+    // current transport semantics from this authoritative topology.
     auto state = make_multiresolution_water_state(world, topology, parameters);
 
     std::int64_t day{};

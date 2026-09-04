@@ -1,6 +1,6 @@
-# WorldSim v0.11.0 — persistent channel transport
+# WorldSim v0.11.0 — persistent reach-aware channel transport
 
-Headless C++20 simulation core for a large persistent world. v0.11 extends the unified v0.10 lifecycle with conserved in-channel water and finite daily travel time while keeping channel state inside the existing multiresolution-water authority and compound checkpoint.
+Headless C++20 simulation core for a large persistent world. The v0.11 channel authority now uses a bounded per-reach simulation-scale residence heuristic while keeping conserved channel state inside the existing multiresolution-water authority and compound checkpoint.
 
 ## Implemented
 
@@ -16,7 +16,7 @@ Headless C++20 simulation core for a large persistent world. v0.11 extends the u
 - Configurable sea-level datum.
 - Whole-world authoritative L0 drainage and fixed 8×8 authoritative L1 refinement.
 - Capacity-aware dynamic water with conservative coarse/fine terrestrial ownership.
-- Persistent conserved L0 channel storage with a fixed one-day e-folding linear-reservoir release.
+- Persistent conserved L0 channel storage with bounded per-reach residence derived from D8 length, filled-elevation slope and accumulated discharge.
 - One-L0-edge-per-day channel causality: current-day runoff/arrivals cannot be re-released during the same global day.
 - Refined-parent channel ingress through the authoritative L1 drainage graph without bypassing the L0 travel-time boundary.
 - Explicit whole-world transient `WeatherState` with coherent daily precipitation, temperature and PET forcing.
@@ -28,11 +28,11 @@ Headless C++20 simulation core for a large persistent world. v0.11 extends the u
 - One exact simulation day shared by weather, coarse water and every refined water tile.
 - Runtime refinement, aggregation, daily advance and persistent surface mutation through the unified owner.
 - Compound versioned checkpoints containing World + Weather + Multiresolution Water as one validated generation.
-- Multiresolution-water persistence v3 with explicit v2 → zero-channel migration.
+- Multiresolution-water persistence v5 with explicit v2/v3/v4 migration and no duplicated persisted transport metadata.
 - Checkpoint section lengths/checksums, strict corruption/truncation checks and component identity/clock validation.
 - Same-directory temporary checkpoint publication with validated atomic replacement of an existing target.
 - Migration from existing `World::save()` files while preserving materialized L2 history.
-- Additive channel queries on standalone multiresolution-water and unified simulation C handles without changing existing C POD layouts.
+- Additive channel-storage and derived transport queries on standalone multiresolution-water and unified simulation C handles without changing existing pre-existing POD layouts.
 - CLI `simulation-run` and `simulation-resume` paths.
 - GCC/Clang warnings-as-errors, ASan/UBSan, and complete MSVC shared-library consumer tests.
 - Europe-scale water, weather+water and unified checkpoint benchmarks in GCC CI.
@@ -82,11 +82,25 @@ The same terrestrial water volume is never independently advanced at both resolu
 
 Channel storage remains one L0-owned conserved volume per terrestrial parent regardless of whether that parent's terrestrial stores are coarse or refined.
 
-For each day:
+For each terrestrial L0 reach, the derived residence heuristic is:
 
 ```text
-release = channel_storage_at_day_start × 0.6321205588285577
+length_cells = 1 for cardinal D8, sqrt(2) for diagonal D8
+slope        = max(downhill_gradient, 1e-5)
+discharge    = max(accumulated_discharge_m3_s, 1)
+
+residence_days = clamp(
+    length_cells
+    × (slope / 1e-5)^-0.08
+    × (discharge / 100)^-0.06,
+    0.75,
+    3.0)
+
+release_fraction = 1 - exp(-1 / residence_days)
+release          = channel_storage_at_day_start × release_fraction
 ```
+
+Length remains the dominant factor. Slope and accumulated discharge only weakly modify residence, and the hard bounds prevent a low-resolution heuristic from pretending to resolve real sub-daily river hydraulics. A flat cardinal reach at the 100 m³/s reference discharge retains the legacy one-day residence.
 
 Only start-of-day storage releases. Current-day runoff, upstream arrivals and refined-tile outlet volume remain in channel storage until a later day, so one parcel crosses at most one L0 edge per global day.
 
@@ -117,7 +131,7 @@ The v0.11 Europe fixture observes a maximum relative daily balance residual of `
 
 Channel storage is part of the Multiresolution Water section; it is not a fourth persistence authority. Continental topology is derived from World and is rebuilt on load rather than serialized.
 
-Multiresolution-water format v3 adds one `double` channel volume per L0 cell. A valid v2 file loads with zero channel storage because v2 had no persistent in-channel state. Format v1 remains rejected because it predates the current spatial soil-capacity semantics.
+Multiresolution-water format v5 keeps the channel-state byte layout introduced by v3. Transport parameters are not serialized: they are re-derived from authoritative topology on create/load. v3 fixed-reservoir and v4 length/slope files therefore preserve their persisted water exactly while migrating to current v5 transport semantics. A valid v2 file loads with zero channel storage because v2 had no persistent in-channel state. Format v1 remains rejected because it predates the current spatial soil-capacity semantics.
 
 The compound save path serializes component sections privately, records byte lengths and FNV-1a corruption checksums, assembles a same-directory publish file, validates the completed container, flushes it, then atomically replaces the target. Failures before publication leave an existing target untouched.
 
@@ -131,7 +145,7 @@ See `docs/SIMULATION.md` for the v0.10 lifecycle/container contract and `docs/CH
 
 Existing C POD layouts and existing function signatures are unchanged in v0.11.
 
-Additive read-only queries expose one L0 channel volume or total channel storage on:
+Additive read-only queries expose one L0 channel volume, total channel storage and derived per-reach transport metadata on:
 
 - `ws_multiresolution_water_state`;
 - `ws_simulation_state`.
@@ -158,7 +172,8 @@ Weather, terrestrial dynamic water and channel storage start from their determin
 - No L1 atmospheric downscaling, pressure, wind, humidity, radiation or explicit cloud physics.
 - PET remains a simple temperature proxy.
 - Soil remains one vertically aggregated bucket with no lateral groundwater aquifer state.
-- Channel travel time is conserved and persistent, but uses one fixed global linear-reservoir coefficient rather than reach-specific geometry/velocity.
+- Channel travel time uses a bounded synthetic daily heuristic from reach length, slope and accumulated discharge; it is not empirically calibrated river celerity.
+- The one-L0-edge-per-day scheduler cannot resolve real sub-daily flood-wave propagation even when a physical reach travel time would be much shorter than one day.
 - No channel capacity, flood-wave/backwater hydraulics, wetlands or floodplains.
 - No erosion, sediment or vegetation feedback.
 
@@ -185,15 +200,15 @@ Europe-scale benchmarks:
 ./build/worldsim_simulation_benchmark
 ```
 
-One GCC Release v0.11 checkpoint observation on the 449,208-L0 / 64-refined fixture measured approximately:
+One GCC Release CI observation with the bounded residence heuristic on the 449,208-L0 / 64-refined fixture measured approximately:
 
-- simulation construction: `815.272 ms`;
-- five unified days: `776.130 ms`;
-- checkpoint save: `170.951 ms`;
-- checkpoint load including topology reconstruction: `939.440 ms`;
+- simulation construction: `857.664 ms`;
+- five unified days: `790.442 ms`;
+- checkpoint save: `174.015 ms`;
+- checkpoint load including topology reconstruction: `971.509 ms`;
 - checkpoint size: `21,769,048 bytes` (`~20.76 MiB`);
-- persistent channel storage after five warmup days: `85,772,959,568.875 m³`;
-- peak benchmark RSS: `238,800 KiB`;
+- persistent channel storage after five warmup days: `85,711,133,025.076 m³`;
+- peak benchmark RSS: `266,788 KiB`;
 - maximum relative water-balance residual: `5.886e-9`.
 
 The benchmark requires exact channel equality across every L0 cell after checkpoint reload and again after one deterministic future day. Timings/RSS are environment-specific observations, not API guarantees.
@@ -247,4 +262,6 @@ Legacy focused solver paths remain available:
 
 ## Next bounded milestone
 
-The new ownership boundary no longer needs redesign. The strongest remaining channel simplification is the single global residence-time coefficient. A later bounded slice can derive deterministic per-reach transport time from authoritative reach/topology/world fields while preserving the same conserved channel array, start-of-day release causality and checkpoint authority.
+The channel model is now intentionally good enough for the current daily world scale: reach length dominates a weak bounded slope/discharge heuristic, while conservation and one-edge/day causality remain exact engine contracts.
+
+Further river-routing depth is deferred until gameplay or validation requires sub-daily propagation, observed-gauge calibration, or independent control of hydrograph lag versus attenuation. At that point the correct milestone is a routing-resolution/model change rather than more precision in the current heuristic.

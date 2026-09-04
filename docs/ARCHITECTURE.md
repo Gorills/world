@@ -182,13 +182,25 @@ commit next WeatherState
 
 A rejected hydrology input cannot advance weather independently.
 
-Channel transport separates start-of-day storage from current-day arrivals. For each terrestrial L0 cell:
+Channel transport separates start-of-day storage from current-day arrivals. Each terrestrial L0 reach derives a bounded simulation-scale residence:
 
 ```text
-release = start_of_day_channel_storage × 0.6321205588285577
+length_cells = 1 or sqrt(2) from the D8 edge
+slope        = max(downhill_gradient, 1e-5)
+discharge    = max(accumulated_discharge_m3_s, 1)
+
+residence_days = clamp(
+    length_cells
+    × (slope / 1e-5)^-0.08
+    × (discharge / 100)^-0.06,
+    0.75,
+    3.0)
+
+release_fraction = 1 - exp(-1 / residence_days)
+release = start_of_day_channel_storage × release_fraction
 ```
 
-The release can cross one L0 downstream edge. Current-day quick runoff/baseflow, upstream arrivals and refined-tile outlet volume are accumulated into next channel storage and cannot contribute to another release during the same day.
+Length remains dominant; slope and discharge are deliberately weak modifiers because the daily scheduler does not resolve physical sub-day celerity. The release can cross one L0 downstream edge. Current-day quick runoff/baseflow, upstream arrivals and refined-tile outlet volume are accumulated into next channel storage and cannot contribute to another release during the same day.
 
 For an unrefined downstream parent:
 
@@ -228,7 +240,7 @@ PET remains a simple temperature-driven approximation because the atmosphere doe
 
 Terrain/climate/soil/topology use deterministic hashing and tie-breaking. Continental routing order is deterministic. Weather innovations are deterministic for world seed + coordinate + integer day.
 
-Channel release uses deterministic start-of-day state and a fixed coefficient. New arrivals cannot feed back into release order during the same step, so topological iteration order does not change the one-edge travel-time rule.
+Channel release uses deterministic start-of-day state and transport derived from deterministic topology fields. New arrivals cannot feed back into release order during the same step, so topological iteration order does not change the one-edge travel-time rule.
 
 The unified checkpoint regressions verify:
 
@@ -249,9 +261,9 @@ The component formats remain versioned independently.
 
 ### Multiresolution water
 
-Format v3 stores world identity, hydrology parameters, exact day, complete L0 terrestrial state, one channel `double` per L0 cell and sparse refined ownership/state. Local soil capacities and topology are re-derived from World identity.
+Format v5 stores the same authoritative water-state layout introduced by v3: world identity, hydrology parameters, exact day, complete L0 terrestrial state, one channel `double` per L0 cell and sparse refined ownership/state. Local soil capacities, topology and channel transport parameters are re-derived from World identity.
 
-Valid v2 files migrate with zero channel storage because v2 had no persistent in-channel authority. Format v1 remains rejected because it predates current spatial soil-capacity semantics.
+v3 fixed-reservoir and v4 length/slope files preserve their persisted water exactly while adopting current v5 bounded length/slope/discharge transport semantics. Valid v2 files migrate with zero channel storage because v2 had no persistent in-channel authority. Format v1 remains rejected because it predates current spatial soil-capacity semantics.
 
 ### Weather
 
@@ -281,7 +293,7 @@ The C ABI remains opaque-handle + POD-copy based so bindings do not depend on C+
 
 `ws_simulation_state` owns the unified authority and exposes creation/destruction, global-day/ownership counts, regional/weather/water copies, day advance, refinement/aggregation, persistent disturbance and compound checkpoint save/load.
 
-v0.11 adds read-only per-L0 and total channel-storage queries to both the standalone multiresolution-water handle and the unified simulation handle. Existing C POD layouts and existing function signatures are unchanged. Arbitrary channel setters are intentionally absent.
+The channel surface exposes read-only per-L0 storage, total channel storage and derived reach transport metadata on both the standalone multiresolution-water handle and the unified simulation handle. Arbitrary channel setters are intentionally absent.
 
 Older standalone World/weather/water C ABIs remain compatible for focused usage.
 
@@ -313,32 +325,33 @@ The v0.11 Europe checkpoint CI fixture uses:
 - exact channel equality across every L0 cell after reload;
 - exact next-day equivalence after reload, including all channel cells.
 
-One GCC Release observation measured approximately:
+One GCC Release CI observation with the bounded residence heuristic measured approximately:
 
-- unified simulation construction: `815.272 ms`;
-- materialize 64 parents: `14.048 ms`;
-- five unified days: `776.130 ms`;
-- checkpoint save: `170.951 ms`;
-- checkpoint load including topology reconstruction: `939.440 ms`;
+- unified simulation construction: `857.664 ms`;
+- materialize 64 parents: `14.077 ms`;
+- five unified days: `790.442 ms`;
+- checkpoint save: `174.015 ms`;
+- checkpoint load including topology reconstruction: `971.509 ms`;
 - checkpoint size: `21,769,048 bytes` (`~20.76 MiB`);
-- channel storage after five warmup days: `85,772,959,568.875 m³`;
-- peak RSS: `238,800 KiB`;
+- channel storage after five warmup days: `85,711,133,025.076 m³`;
+- peak RSS: `266,788 KiB`;
 - maximum relative water-balance residual: `5.886e-9`.
 
 These are CI observations, not API/performance guarantees.
 
 ## 17. Current strongest limitation
 
-The same-day whole-DAG routing limitation is closed: channel volume is persistent conserved state and only start-of-day storage can release across one L0 edge.
+The same-day whole-DAG routing limitation is closed: channel volume is persistent conserved state and only start-of-day storage can release across one L0 edge. Uniform residence time is also closed at the simulation scale: D8 length is the dominant per-reach term, with weak bounded slope/discharge modifiers.
 
-The strongest remaining simplification inside that new boundary is **uniform travel time**. Every terrestrial L0 reach currently uses the same one-day e-folding reservoir coefficient, regardless of reach length, slope, discharge, channel geometry or velocity.
+The remaining routing limitation is **temporal/model resolution**, not another missing coefficient. The daily one-L0-edge scheduler cannot represent a flood wave crossing several 8192 m reaches within a day, and the current residence heuristic is intentionally not calibrated against observed gauges.
 
-A later bounded routing slice should derive deterministic per-reach residence time from already authoritative reach/topology/world fields while preserving:
+Further routing work is deferred until a concrete requirement demands one or more of:
 
-- channel ownership inside `MultiresolutionWaterState`;
-- whole-world mass balance;
-- start-of-day release causality;
-- explicit persistence-format migration;
-- exact compound-checkpoint future equivalence.
+- sub-daily/multi-edge propagation;
+- empirical travel-time calibration;
+- independent hydrograph lag and attenuation;
+- channel geometry/capacity or backwater behavior.
 
-Full flood-wave/backwater hydraulics, floodplain/wetland exchange, L1 atmospheric downscaling, lateral groundwater, multi-layer soil and geomorphic/vegetation feedback remain separate deferred systems.
+At that point the bounded change should alter the routing model/resolution rather than over-calibrate the current heuristic.
+
+Floodplain/wetland exchange, L1 atmospheric downscaling, lateral groundwater, multi-layer soil and geomorphic/vegetation feedback remain separate deferred systems.

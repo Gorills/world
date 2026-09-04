@@ -38,12 +38,14 @@ worldsim::WorldConfig config() {
 worldsim::ContinentalHydrologyCell cell(
     worldsim::CellCoord coord,
     float filled_elevation_m,
+    float accumulated_discharge_m3_s,
     bool has_downstream,
     worldsim::CellCoord downstream) {
     worldsim::ContinentalHydrologyCell out;
     out.coord = coord;
     out.terrain_elevation_m = filled_elevation_m;
     out.filled_elevation_m = filled_elevation_m;
+    out.accumulated_discharge_m3_s = accumulated_discharge_m3_s;
     out.downstream_coord = downstream;
     out.has_downstream = has_downstream;
     out.terminal_outlet_coord = {1, 0};
@@ -58,10 +60,10 @@ worldsim::ContinentalHydrologyResult topology(const worldsim::WorldConfig& cfg) 
     out.width_cells = 2;
     out.height_cells = 2;
     out.cells = {
-        cell({0, 0}, 100.0f, true, {1, 0}),   // flat cardinal: legacy one-day residence
-        cell({1, 0}, 100.0f, false, {}),      // terminal outlet: nominal one-cell residence
-        cell({0, 1}, 110.0f, true, {1, 0}),   // downhill diagonal: longer than cardinal
-        cell({1, 1}, 120.0f, true, {1, 0}),   // downhill cardinal: faster than flat
+        cell({0, 0}, 100.0f, 100.0f, true, {1, 0}),  // reference flat cardinal
+        cell({1, 0}, 100.0f, 1.0f, false, {}),       // same geometry, small discharge
+        cell({0, 1}, 100.0f, 100.0f, true, {1, 0}),  // flat diagonal
+        cell({1, 1}, 120.0f, 100.0f, true, {1, 0}),  // steep cardinal
     };
     return out;
 }
@@ -129,27 +131,33 @@ int main() {
     const auto& steep = state.channel_transport({1, 1});
     const double legacy_release = 1.0 - std::exp(-1.0);
     const double diagonal_length = std::sqrt(2.0) * static_cast<double>(cfg.climate_cell_m);
-    const double diagonal_gradient = 10.0 / diagonal_length;
-    const double diagonal_residence = std::sqrt(2.0) / (1.0 + diagonal_gradient);
+    const double small_discharge_residence = std::pow(1.0 / 100.0, -0.06);
+    const double steep_gradient = 20.0 / static_cast<double>(cfg.climate_cell_m);
+    const double steep_unbounded_residence = std::pow(steep_gradient / 1.0e-5, -0.08);
+    const double steep_residence = std::clamp(steep_unbounded_residence, 0.75, 3.0);
 
     check(flat.reach_length_m == static_cast<double>(cfg.climate_cell_m) &&
           flat.downhill_gradient == 0.0 && flat.residence_days == 1.0 &&
           near(flat.release_fraction_per_day, legacy_release),
           "flat cardinal reach preserves the legacy one-day linear reservoir");
     check(terminal.reach_length_m == static_cast<double>(cfg.climate_cell_m) &&
-          terminal.downhill_gradient == 0.0 && terminal.residence_days == 1.0 &&
-          near(terminal.release_fraction_per_day, legacy_release),
-          "terminal outlet preserves the nominal one-cell legacy residence");
+          terminal.downhill_gradient == 0.0 &&
+          near(terminal.residence_days, small_discharge_residence) &&
+          terminal.residence_days > flat.residence_days &&
+          terminal.release_fraction_per_day < flat.release_fraction_per_day,
+          "small accumulated discharge weakly increases residence");
     check(near(diagonal.reach_length_m, diagonal_length) &&
-          near(diagonal.downhill_gradient, diagonal_gradient) &&
-          near(diagonal.residence_days, diagonal_residence) &&
+          diagonal.downhill_gradient == 0.0 &&
+          near(diagonal.residence_days, std::sqrt(2.0)) &&
           diagonal.residence_days > flat.residence_days &&
           diagonal.release_fraction_per_day < flat.release_fraction_per_day,
-          "diagonal reach length deterministically increases residence");
+          "flat diagonal reach keeps geometric length as the dominant residence factor");
     check(steep.reach_length_m == static_cast<double>(cfg.climate_cell_m) &&
-          steep.downhill_gradient > 0.0 && steep.residence_days < flat.residence_days &&
+          near(steep.downhill_gradient, steep_gradient) &&
+          near(steep.residence_days, steep_residence) &&
+          steep.residence_days == 0.75 &&
           steep.release_fraction_per_day > flat.release_fraction_per_day,
-          "downhill cardinal gradient deterministically decreases residence");
+          "steep reach is accelerated but bounded by the simulation-scale residence floor");
 
     auto malformed = topo;
     malformed.cells[0].filled_elevation_m = std::numeric_limits<float>::quiet_NaN();
@@ -161,6 +169,18 @@ int main() {
     }
     check(non_finite_rejected,
           "channel transport rejects caller topology with non-finite filled elevation");
+
+    malformed = topo;
+    malformed.cells[0].accumulated_discharge_m3_s =
+        std::numeric_limits<float>::quiet_NaN();
+    bool non_finite_discharge_rejected = false;
+    try {
+        (void)make_multiresolution_water_state(world, malformed, routing_parameters());
+    } catch (const std::invalid_argument&) {
+        non_finite_discharge_rejected = true;
+    }
+    check(non_finite_discharge_rejected,
+          "channel transport rejects caller topology with non-finite accumulated discharge");
 
     const auto pulse = pulse_forcing();
     const auto day1 = advance_multiresolution_water_day(world, state, pulse);
@@ -190,44 +210,64 @@ int main() {
           "reach-aware channel routing conserves water");
 
     const auto root = std::filesystem::temp_directory_path() / "worldsim_channel_transport";
+    const auto v5_path = root.string() + ".v5.bin";
     const auto v4_path = root.string() + ".v4.bin";
     const auto v3_path = root.string() + ".v3.bin";
     auto persistence_source = make_multiresolution_water_state(world, topo, routing_parameters());
     (void)advance_multiresolution_water_day(world, persistence_source, pulse);
-    save_multiresolution_water_state(persistence_source, v4_path);
-    check(read_version(v4_path) == 4u,
-          "reach-aware channel persistence writes semantic format v4");
+    save_multiresolution_water_state(persistence_source, v5_path);
+    check(read_version(v5_path) == 5u,
+          "bounded channel heuristic persistence writes semantic format v5");
     std::filesystem::copy_file(
-        v4_path, v3_path, std::filesystem::copy_options::overwrite_existing);
+        v5_path, v4_path, std::filesystem::copy_options::overwrite_existing);
+    rewrite_version(v4_path, 4u);
+    std::filesystem::copy_file(
+        v5_path, v3_path, std::filesystem::copy_options::overwrite_existing);
     rewrite_version(v3_path, 3u);
 
-    auto loaded_v4 = load_multiresolution_water_state(world, topo, v4_path);
+    auto loaded_v5 = load_multiresolution_water_state(world, topo, v5_path);
+    auto migrated_v4 = load_multiresolution_water_state(world, topo, v4_path);
     auto migrated_v3 = load_multiresolution_water_state(world, topo, v3_path);
-    bool migration_exact = loaded_v4.simulated_day() == migrated_v3.simulated_day();
+    bool migration_exact =
+        loaded_v5.simulated_day() == migrated_v4.simulated_day() &&
+        loaded_v5.simulated_day() == migrated_v3.simulated_day();
     for (const auto& topo_cell : topo.cells) {
         migration_exact = migration_exact &&
-            loaded_v4.channel_storage_m3(topo_cell.coord) ==
+            loaded_v5.channel_storage_m3(topo_cell.coord) ==
+                migrated_v4.channel_storage_m3(topo_cell.coord) &&
+            loaded_v5.channel_storage_m3(topo_cell.coord) ==
                 migrated_v3.channel_storage_m3(topo_cell.coord) &&
             same_transport(
-                loaded_v4.channel_transport(topo_cell.coord),
+                loaded_v5.channel_transport(topo_cell.coord),
+                migrated_v4.channel_transport(topo_cell.coord)) &&
+            same_transport(
+                loaded_v5.channel_transport(topo_cell.coord),
                 migrated_v3.channel_transport(topo_cell.coord));
     }
     check(migration_exact,
-          "v3 migration preserves water state and derives identical v4 transport metadata");
+          "v3/v4 migration preserves water state and derives identical current v5 transport");
 
-    const auto v4_next = advance_multiresolution_water_day(world, loaded_v4, dry);
+    const auto v5_next = advance_multiresolution_water_day(world, loaded_v5, dry);
+    const auto v4_next = advance_multiresolution_water_day(world, migrated_v4, dry);
     const auto v3_next = advance_multiresolution_water_day(world, migrated_v3, dry);
-    bool future_exact = v4_next.storage_after_m3 == v3_next.storage_after_m3 &&
-                        v4_next.terminal_outflow_m3 == v3_next.terminal_outflow_m3 &&
-                        v4_next.water_balance_error_m3 == v3_next.water_balance_error_m3;
+    bool future_exact =
+        v5_next.storage_after_m3 == v4_next.storage_after_m3 &&
+        v5_next.storage_after_m3 == v3_next.storage_after_m3 &&
+        v5_next.terminal_outflow_m3 == v4_next.terminal_outflow_m3 &&
+        v5_next.terminal_outflow_m3 == v3_next.terminal_outflow_m3 &&
+        v5_next.water_balance_error_m3 == v4_next.water_balance_error_m3 &&
+        v5_next.water_balance_error_m3 == v3_next.water_balance_error_m3;
     for (const auto& topo_cell : topo.cells) {
         future_exact = future_exact &&
-            loaded_v4.channel_storage_m3(topo_cell.coord) ==
+            loaded_v5.channel_storage_m3(topo_cell.coord) ==
+                migrated_v4.channel_storage_m3(topo_cell.coord) &&
+            loaded_v5.channel_storage_m3(topo_cell.coord) ==
                 migrated_v3.channel_storage_m3(topo_cell.coord);
     }
     check(future_exact,
-          "v3 migrated checkpoint follows the same deterministic reach-aware future evolution");
+          "migrated checkpoints follow the same deterministic v5 future evolution");
 
+    std::filesystem::remove(v5_path);
     std::filesystem::remove(v4_path);
     std::filesystem::remove(v3_path);
 

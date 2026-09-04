@@ -18,6 +18,16 @@ namespace {
 constexpr double kSecondsPerDay = 86'400.0;
 constexpr double kMaxWaterDepthMm = 1.0e30;
 constexpr double kSqrt2 = 1.4142135623730950488;
+// Deliberately weak simulation-scale transport heuristic. The daily L0 scheduler cannot
+// represent real sub-day celerity, so length remains dominant while slope/discharge only
+// nudge residence time inside a bounded range.
+constexpr double kChannelSlopeFloor = 1.0e-5;
+constexpr double kChannelDischargeFloorM3S = 1.0;
+constexpr double kChannelReferenceDischargeM3S = 100.0;
+constexpr double kChannelSlopeExponent = -0.08;
+constexpr double kChannelDischargeExponent = -0.06;
+constexpr double kChannelMinResidenceDays = 0.75;
+constexpr double kChannelMaxResidenceDays = 3.0;
 constexpr std::uint32_t kNoDownstream = 0xFFFFFFFFu;
 constexpr std::size_t kNoIndex = std::numeric_limits<std::size_t>::max();
 
@@ -92,8 +102,10 @@ ChannelTransportProperties derive_channel_transport(
     const ContinentalHydrologyResult& topology,
     std::size_t index) {
     const auto& cell = topology.cells.at(index);
-    if (!std::isfinite(cell.filled_elevation_m)) {
-        throw std::invalid_argument("continental topology contains non-finite filled elevation");
+    if (!std::isfinite(cell.filled_elevation_m) ||
+        !finite_non_negative(cell.accumulated_discharge_m3_s)) {
+        throw std::invalid_argument(
+            "continental topology contains invalid channel transport inputs");
     }
 
     bool diagonal = false;
@@ -114,7 +126,21 @@ ChannelTransportProperties derive_channel_transport(
         ? std::max(0.0, static_cast<double>(cell.filled_elevation_m) - downstream_filled_elevation_m)
         : 0.0;
     out.downhill_gradient = drop_m / out.reach_length_m;
-    out.residence_days = length_cells / (1.0 + out.downhill_gradient);
+
+    const double slope_ratio =
+        std::max(out.downhill_gradient, kChannelSlopeFloor) / kChannelSlopeFloor;
+    const double discharge_m3_s = std::max(
+        static_cast<double>(cell.accumulated_discharge_m3_s),
+        kChannelDischargeFloorM3S);
+    const double discharge_ratio = discharge_m3_s / kChannelReferenceDischargeM3S;
+    const double unbounded_residence_days =
+        length_cells *
+        std::pow(slope_ratio, kChannelSlopeExponent) *
+        std::pow(discharge_ratio, kChannelDischargeExponent);
+    out.residence_days = std::clamp(
+        unbounded_residence_days,
+        kChannelMinResidenceDays,
+        kChannelMaxResidenceDays);
     out.release_fraction_per_day = 1.0 - std::exp(-1.0 / out.residence_days);
     if (!(out.reach_length_m > 0.0) || !finite_non_negative(out.downhill_gradient) ||
         !(out.residence_days > 0.0) || !std::isfinite(out.residence_days) ||
