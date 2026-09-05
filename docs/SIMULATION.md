@@ -200,3 +200,14 @@ The benchmark requires exact channel equality across every L0 cell plus exact eq
 The compound container and its component sections currently encode scalar fields through the project's existing native-POD binary persistence. Cross-endian or arbitrary cross-ABI file portability is not a guarantee.
 
 Changing that contract should be a deliberate persistence-format migration rather than an incidental change to the unified owner.
+
+
+## Settlement integration (v0.15)
+
+`SimulationState::found_settlement()` creates a sparse persistent entity with deterministic monotonic identity and the current global day as `founded_day`. One regional cell may own at most one settlement.
+
+`SimulationState::settlement_suitability()` is a current-day derived diagnostic. It combines bounded simulation-scale heuristic factors for terrain, soil-water availability, vegetation biomass, temperature and disturbance. These factors are not empirical demographic calibration and are never serialized.
+
+Daily population change is deliberately weak and bounded: population moves slowly toward the derived environmental capacity, with independent growth/decline clamps and a hard non-negative/finite invariant. There is no migration, trade, roads, agriculture, demographics or settlement-to-settlement interaction in v0.15.
+
+Compound checkpoints use container format v2 with a fourth settlement section. Format-v1 checkpoints are accepted as an explicit migration path and construct an empty settlement authority.

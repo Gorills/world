@@ -293,3 +293,10 @@ Legacy focused solver paths remain available:
 v0.14 establishes the first persistent ecology-facing state without making ecology global/eager. Further plant physics is deferred until a concrete consumer needs it.
 
 The next strongest product-level gap is now the entity/settlement layer that can consume terrain, weather, water, disturbance and vegetation. Deeper hydrology or richer ecology should be driven by requirements from that layer rather than added by default.
+
+
+## v0.15 settlements
+
+v0.15 adds the first gameplay-facing persistent entity layer. `SimulationState` owns a sparse `SettlementState` authority separately from `World` ecology. Settlements have deterministic IDs, regional coordinates, population and founded day. Current-day suitability is derived read-only from existing terrain, weather, authoritative water, persistent vegetation biomass and disturbance; queries do not materialize new L1/L2 state.
+
+`advance_day_full()` stages vegetation and settlement next-state before advancing the authoritative environment, then closes the generation with no-throw swaps. Compound simulation checkpoints are format v2 with a settlement section; v1 pre-settlement checkpoints migrate to an empty settlement authority. The C ABI remains additive and exposes settlement operations plus `ws_simulation_advance_day_v3`.

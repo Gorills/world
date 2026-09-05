@@ -128,6 +128,13 @@ bool same_local_patch(
     return true;
 }
 
+bool same_settlements(
+    const worldsim::SimulationState& a,
+    const worldsim::SimulationState& b) {
+    return a.settlements() == b.settlements() &&
+        a.settlement_state().next_id() == b.settlement_state().next_id();
+}
+
 bool same_all_local_patches(
     const worldsim::World& a,
     const worldsim::World& b,
@@ -204,6 +211,16 @@ int main() {
         throw std::runtime_error(
             "simulation benchmark failed to create 64 sparse vegetation patches");
     }
+    for (std::size_t i = 0; i < vegetation_regions.size(); ++i) {
+        const auto id = simulation.found_settlement(
+            vegetation_regions[i], 100.0 + static_cast<double>(i));
+        if (id != i + 1) {
+            throw std::runtime_error("simulation benchmark settlement ids are not deterministic");
+        }
+    }
+    if (simulation.settlements().size() != vegetation_regions.size()) {
+        throw std::runtime_error("simulation benchmark did not retain 64 sparse settlements");
+    }
 
     constexpr int kWarmupDays = 5;
     double max_relative_balance_error = 0.0;
@@ -217,6 +234,9 @@ int main() {
             throw std::runtime_error("simulation benchmark global clock diverged");
         }
         if (report.vegetation.patch_count != vegetation_regions.size() ||
+            report.settlements.settlement_count != vegetation_regions.size() ||
+            !std::isfinite(report.settlements.population_after) ||
+            report.settlements.population_after < 0.0 ||
             report.vegetation.land_cell_count == 0 ||
             !std::isfinite(report.vegetation.biomass_area_after_m2) ||
             !(report.vegetation.disturbance_area_after_m2 <
@@ -263,12 +283,14 @@ int main() {
     if (loaded.simulated_day() != simulation.simulated_day() ||
         loaded.topology().cells.size() != l0_count ||
         loaded.water().refined_tile_count() != 64 ||
-        loaded.world().materialized_patch_count() != simulation.world().materialized_patch_count()) {
+        loaded.world().materialized_patch_count() != simulation.world().materialized_patch_count() ||
+        loaded.settlements().size() != simulation.settlements().size()) {
         throw std::runtime_error("simulation benchmark checkpoint ownership metadata did not round-trip");
     }
     if (!same_weather_cell(simulation.weather(), loaded.weather(), refined_parents.front()) ||
         !same_refined_tile(simulation.water(), loaded.water(), refined_parents.front()) ||
         !same_channels(simulation.topology(), simulation.water(), loaded.water()) ||
+        !same_settlements(simulation, loaded) ||
         !same_all_local_patches(simulation.world(), loaded.world(), vegetation_regions)) {
         throw std::runtime_error("simulation benchmark checkpoint state did not round-trip exactly");
     }
@@ -282,6 +304,7 @@ int main() {
         !same_weather_cell(simulation.weather(), loaded.weather(), refined_parents.front()) ||
         !same_refined_tile(simulation.water(), loaded.water(), refined_parents.front()) ||
         !same_channels(simulation.topology(), simulation.water(), loaded.water()) ||
+        !same_settlements(simulation, loaded) ||
         !same_all_local_patches(simulation.world(), loaded.world(), vegetation_regions)) {
         throw std::runtime_error("simulation benchmark checkpoint changed deterministic future evolution");
     }
@@ -292,6 +315,7 @@ int main() {
               << "benchmark_l0_cells=" << l0_count << '\n'
               << "benchmark_refined_tiles=64\n"
               << "benchmark_vegetation_patches=" << vegetation_regions.size() << '\n'
+              << "benchmark_settlements=" << simulation.settlements().size() << '\n'
               << "benchmark_vegetation_disturbed_cells=" << vegetation_disturbed_cells << '\n'
               << "benchmark_warmup_days=" << kWarmupDays << '\n'
               << "simulation_create_ms=" << elapsed_ms(create_begin, create_end) << '\n'

@@ -362,3 +362,20 @@ The environment stack now provides terrain, weather, multiresolution water, pers
 Vegetation itself is deliberately minimal: one normalized biomass/live-cover proxy with no species, age structure, competition, succession, seed transport, fire, nutrients, carbon accounting or feedback into water.
 
 Further channel hydraulics, persistent L1 atmospheric dynamics, lateral groundwater, multi-layer soil, richer ecology and geomorphic feedback remain deferred until concrete entity/gameplay requirements justify them.
+
+
+## v0.15 settlement authority
+
+Settlements are historical gameplay entities, not static or ecological world truth. Their persistence authority is therefore `SettlementState`, owned by `SimulationState` alongside weather and multiresolution water. `World` continues to own sparse L2 disturbance/vegetation history.
+
+The ownership boundary is intentionally one-way for diagnostics: settlement suitability consumes current `World`, `WeatherState` and `MultiresolutionWaterState` data but stores no duplicate environment fields. A read-only suitability query does not refine water or materialize local patches. Founding a settlement materializes the corresponding local patch so subsequent settlement evolution can consume persistent vegetation/disturbance history.
+
+Unified daily commit order is:
+
+1. validate current generation;
+2. derive/stage vegetation and settlement next-state from current-day environment;
+3. advance coupled weather/water;
+4. no-throw swap sparse World history and SettlementState;
+5. validate the resulting generation.
+
+This keeps settlements on the same simulation day without making them part of `World`.
