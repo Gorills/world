@@ -185,8 +185,7 @@ SimulationDayReport SimulationState::advance_day_full() {
             settlement_suitability(value.regional_coord).environmental_capacity;
     }
     auto next_values = staged_settlements.settlements();
-    staged_settlements = {};
-    for (auto value : next_values) {
+    for (auto& value : next_values) {
         const double capacity = settlement_suitability(value.regional_coord).environmental_capacity;
         const double raw_delta = (capacity - value.population) * 0.001;
         const double max_growth = std::max(0.25, capacity * 0.002);
@@ -196,9 +195,9 @@ SimulationDayReport SimulationState::advance_day_full() {
         if (!std::isfinite(value.population)) {
             throw std::runtime_error("settlement population evolution became non-finite");
         }
-        (void)staged_settlements.found(
-            value.regional_coord, value.population, value.founded_day);
     }
+    staged_settlements = SettlementState::from_persisted(
+        std::move(next_values), settlements_.next_id());
     settlement_report.population_after = 0.0;
     for (const auto& value : staged_settlements.settlements()) {
         settlement_report.population_after += value.population;

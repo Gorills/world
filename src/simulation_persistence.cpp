@@ -26,14 +26,21 @@ namespace worldsim {
 namespace {
 
 constexpr std::array<char, 8> kMagic{'W','S','S','I','M','0','0','1'};
-constexpr std::uint32_t kFormatVersion = 1;
-constexpr std::uint32_t kSectionCount = 3;
+constexpr std::uint32_t kLegacyFormatVersion = 1;
+constexpr std::uint32_t kFormatVersion = 2;
+constexpr std::uint32_t kLegacySectionCount = 3;
+constexpr std::uint32_t kSectionCount = 4;
 constexpr std::uint32_t kWorldSection = 1;
 constexpr std::uint32_t kWeatherSection = 2;
 constexpr std::uint32_t kWaterSection = 3;
+constexpr std::uint32_t kSettlementSection = 4;
+constexpr std::array<char, 8> kSettlementMagic{'W','S','S','E','T','0','0','1'};
+constexpr std::uint32_t kSettlementFormatVersion = 1;
 constexpr std::uint64_t kFnvOffset = 14695981039346656037ULL;
 constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
 constexpr std::size_t kIoBufferBytes = 64 * 1024;
+constexpr std::uint64_t kSettlementRecordBytes =
+    sizeof(SettlementId) + sizeof(std::int64_t) * 3 + sizeof(double);
 
 struct SectionDescriptor {
     std::uint32_t id{};
@@ -42,8 +49,9 @@ struct SectionDescriptor {
 };
 
 struct CheckpointHeader {
+    std::uint32_t version{};
     std::int64_t simulated_day{};
-    std::array<SectionDescriptor, kSectionCount> sections{};
+    std::vector<SectionDescriptor> sections;
 };
 
 class TempFiles {
@@ -54,9 +62,7 @@ public:
             std::filesystem::remove(path, ec);
         }
     }
-
     void add(std::filesystem::path path) { paths_.push_back(std::move(path)); }
-
 private:
     std::vector<std::filesystem::path> paths_;
 };
@@ -88,10 +94,9 @@ std::filesystem::path unique_auxiliary_path(const char* tag) {
     const auto tick = static_cast<std::uint64_t>(
         std::chrono::steady_clock::now().time_since_epoch().count());
     const auto serial = sequence.fetch_add(1, std::memory_order_relaxed);
-    const auto name = std::string("worldsim.") + tag + "." +
-        std::to_string(process_id()) + "." + std::to_string(tick) + "." +
-        std::to_string(serial) + ".tmp";
-    return std::filesystem::temp_directory_path() / name;
+    return std::filesystem::temp_directory_path() /
+        (std::string("worldsim.") + tag + "." + std::to_string(process_id()) + "." +
+         std::to_string(tick) + "." + std::to_string(serial) + ".tmp");
 }
 
 std::filesystem::path unique_publish_path(const std::filesystem::path& target) {
@@ -100,10 +105,8 @@ std::filesystem::path unique_publish_path(const std::filesystem::path& target) {
         std::chrono::steady_clock::now().time_since_epoch().count());
     const auto serial = sequence.fetch_add(1, std::memory_order_relaxed);
     const auto parent = target.has_parent_path() ? target.parent_path() : std::filesystem::path(".");
-    const auto name = std::string(".worldsim-checkpoint.") +
-        std::to_string(process_id()) + "." + std::to_string(tick) + "." +
-        std::to_string(serial) + ".tmp";
-    return parent / name;
+    return parent / (std::string(".worldsim-checkpoint.") + std::to_string(process_id()) + "." +
+        std::to_string(tick) + "." + std::to_string(serial) + ".tmp");
 }
 
 std::uint64_t update_checksum(std::uint64_t hash, const char* data, std::size_t size) noexcept {
@@ -122,9 +125,7 @@ std::uint64_t checksum_file(const std::filesystem::path& path) {
     while (in) {
         in.read(buffer.data(), static_cast<std::streamsize>(buffer.size()));
         const auto count = in.gcount();
-        if (count > 0) {
-            hash = update_checksum(hash, buffer.data(), static_cast<std::size_t>(count));
-        }
+        if (count > 0) hash = update_checksum(hash, buffer.data(), static_cast<std::size_t>(count));
     }
     if (!in.eof()) throw std::runtime_error("failed while checksumming checkpoint section");
     return hash;
@@ -151,25 +152,88 @@ void append_file(std::ostream& out, const std::filesystem::path& path, std::uint
     if (!in.eof()) throw std::runtime_error("failed while validating checkpoint section end");
 }
 
-CheckpointHeader read_header(
-    std::istream& in,
+void save_settlement_state(const SettlementState& state, const std::filesystem::path& path) {
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) throw std::runtime_error("cannot create settlement checkpoint section");
+    out.write(kSettlementMagic.data(), static_cast<std::streamsize>(kSettlementMagic.size()));
+    write_pod(out, kSettlementFormatVersion);
+    const auto count = static_cast<std::uint64_t>(state.settlements().size());
+    write_pod(out, count);
+    write_pod(out, state.next_id());
+    for (const auto& value : state.settlements()) {
+        write_pod(out, value.id);
+        write_pod(out, value.regional_coord.x);
+        write_pod(out, value.regional_coord.y);
+        write_pod(out, value.population);
+        write_pod(out, value.founded_day);
+    }
+    out.flush();
+    if (!out) throw std::runtime_error("failed to flush settlement checkpoint section");
+}
+
+SettlementState load_settlement_state(
+    const World& world,
+    std::int64_t simulated_day,
     const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("cannot open settlement checkpoint section");
+    std::array<char, 8> magic{};
+    in.read(magic.data(), static_cast<std::streamsize>(magic.size()));
+    if (!in || magic != kSettlementMagic) throw std::runtime_error("invalid settlement checkpoint magic");
+    std::uint32_t version{};
+    read_pod(in, version);
+    if (version != kSettlementFormatVersion) throw std::runtime_error("unsupported settlement checkpoint version");
+    std::uint64_t count{};
+    SettlementId next_id{};
+    read_pod(in, count);
+    read_pod(in, next_id);
+    const auto file_size = std::filesystem::file_size(path);
+    constexpr std::uint64_t kHeaderBytes = 8 + sizeof(std::uint32_t) +
+        sizeof(std::uint64_t) + sizeof(SettlementId);
+    if (file_size < kHeaderBytes ||
+        count > (file_size - kHeaderBytes) / kSettlementRecordBytes ||
+        count > static_cast<std::uint64_t>(std::numeric_limits<std::size_t>::max())) {
+        throw std::runtime_error("settlement checkpoint count is invalid");
+    }
+    std::vector<Settlement> values;
+    values.reserve(static_cast<std::size_t>(count));
+    for (std::uint64_t i = 0; i < count; ++i) {
+        Settlement value;
+        read_pod(in, value.id);
+        read_pod(in, value.regional_coord.x);
+        read_pod(in, value.regional_coord.y);
+        read_pod(in, value.population);
+        read_pod(in, value.founded_day);
+        if (value.founded_day > simulated_day) {
+            throw std::runtime_error("settlement checkpoint contains a future founded day");
+        }
+        (void)world.sample_region(value.regional_coord);
+        values.push_back(value);
+    }
+    char trailing{};
+    if (in.read(&trailing, 1)) throw std::runtime_error("settlement checkpoint contains trailing data");
+    if (!in.eof()) throw std::runtime_error("failed while validating settlement checkpoint end");
+    return SettlementState::from_persisted(std::move(values), next_id);
+}
+
+CheckpointHeader read_header(std::istream& in, const std::filesystem::path& path) {
     std::array<char, 8> magic{};
     in.read(magic.data(), static_cast<std::streamsize>(magic.size()));
     if (!in || magic != kMagic) throw std::runtime_error("invalid simulation checkpoint magic");
 
-    std::uint32_t version{};
-    read_pod(in, version);
-    if (version != kFormatVersion) throw std::runtime_error("unsupported simulation checkpoint version");
-
     CheckpointHeader header;
+    read_pod(in, header.version);
+    if (header.version != kLegacyFormatVersion && header.version != kFormatVersion) {
+        throw std::runtime_error("unsupported simulation checkpoint version");
+    }
     read_pod(in, header.simulated_day);
     if (header.simulated_day < 0) throw std::runtime_error("simulation checkpoint has a negative global day");
 
     std::uint32_t count{};
     read_pod(in, count);
-    if (count != kSectionCount) throw std::runtime_error("simulation checkpoint section count is invalid");
-
+    const auto expected = header.version == kLegacyFormatVersion ? kLegacySectionCount : kSectionCount;
+    if (count != expected) throw std::runtime_error("simulation checkpoint section count is invalid");
+    header.sections.resize(count);
     for (auto& section : header.sections) {
         read_pod(in, section.id);
         read_pod(in, section.size);
@@ -178,7 +242,8 @@ CheckpointHeader read_header(
     }
     if (header.sections[0].id != kWorldSection ||
         header.sections[1].id != kWeatherSection ||
-        header.sections[2].id != kWaterSection) {
+        header.sections[2].id != kWaterSection ||
+        (header.version == kFormatVersion && header.sections[3].id != kSettlementSection)) {
         throw std::runtime_error("simulation checkpoint section order is invalid");
     }
 
@@ -190,7 +255,7 @@ CheckpointHeader read_header(
     const auto payload_size = file_size - header_size;
     std::uint64_t declared_size = 0;
     for (const auto& section : header.sections) {
-        if (section.size > payload_size - declared_size) {
+        if (declared_size > payload_size || section.size > payload_size - declared_size) {
             throw std::runtime_error("simulation checkpoint section lengths exceed file size");
         }
         declared_size += section.size;
@@ -201,10 +266,7 @@ CheckpointHeader read_header(
     return header;
 }
 
-void consume_section(
-    std::istream& in,
-    const SectionDescriptor& section,
-    std::ostream* extracted) {
+void consume_section(std::istream& in, const SectionDescriptor& section, std::ostream* extracted) {
     std::array<char, kIoBufferBytes> buffer{};
     std::uint64_t remaining = section.size;
     std::uint64_t hash = kFnvOffset;
@@ -221,9 +283,7 @@ void consume_section(
         }
         remaining -= static_cast<std::uint64_t>(count);
     }
-    if (hash != section.checksum) {
-        throw std::runtime_error("simulation checkpoint section checksum mismatch");
-    }
+    if (hash != section.checksum) throw std::runtime_error("simulation checkpoint section checksum mismatch");
 }
 
 CheckpointHeader validate_container(const std::filesystem::path& path) {
@@ -253,9 +313,7 @@ void sync_file(const std::filesystem::path& path) {
     const HANDLE handle = CreateFileW(
         path.c_str(), GENERIC_WRITE, FILE_SHARE_READ, nullptr, OPEN_EXISTING,
         FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (handle == INVALID_HANDLE_VALUE) {
-        throw std::runtime_error("cannot open completed checkpoint for flush");
-    }
+    if (handle == INVALID_HANDLE_VALUE) throw std::runtime_error("cannot open completed checkpoint for flush");
     const BOOL ok = FlushFileBuffers(handle);
     CloseHandle(handle);
     if (!ok) throw std::runtime_error("failed to flush completed checkpoint");
@@ -268,12 +326,9 @@ void sync_file(const std::filesystem::path& path) {
 #endif
 }
 
-void publish_atomically(
-    const std::filesystem::path& temporary,
-    const std::filesystem::path& target) {
+void publish_atomically(const std::filesystem::path& temporary, const std::filesystem::path& target) {
 #ifdef _WIN32
-    if (!MoveFileExW(
-            temporary.c_str(), target.c_str(),
+    if (!MoveFileExW(temporary.c_str(), target.c_str(),
             MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
         throw std::runtime_error("failed to publish simulation checkpoint atomically");
     }
@@ -294,22 +349,23 @@ void SimulationState::save_checkpoint(const std::filesystem::path& path) const {
     const auto world_path = unique_auxiliary_path("world");
     const auto weather_path = unique_auxiliary_path("weather");
     const auto water_path = unique_auxiliary_path("water");
+    const auto settlement_path = unique_auxiliary_path("settlements");
     const auto publish_path = unique_publish_path(path);
-    cleanup.add(world_path);
-    cleanup.add(weather_path);
-    cleanup.add(water_path);
-    cleanup.add(publish_path);
+    cleanup.add(world_path); cleanup.add(weather_path); cleanup.add(water_path);
+    cleanup.add(settlement_path); cleanup.add(publish_path);
 
     world_.save(world_path);
     save_weather_state(weather_, weather_path);
     save_multiresolution_water_state(water_, water_path);
+    save_settlement_state(settlements_, settlement_path);
 
     const std::array<std::filesystem::path, kSectionCount> section_paths{
-        world_path, weather_path, water_path};
+        world_path, weather_path, water_path, settlement_path};
     std::array<SectionDescriptor, kSectionCount> sections{};
     sections[0].id = kWorldSection;
     sections[1].id = kWeatherSection;
     sections[2].id = kWaterSection;
+    sections[3].id = kSettlementSection;
     for (std::size_t i = 0; i < sections.size(); ++i) {
         sections[i].size = std::filesystem::file_size(section_paths[i]);
         if (sections[i].size == 0) throw std::runtime_error("cannot checkpoint an empty simulation section");
@@ -325,20 +381,16 @@ void SimulationState::save_checkpoint(const std::filesystem::path& path) const {
         write_pod(out, simulated_day());
         write_pod(out, kSectionCount);
         for (const auto& section : sections) {
-            write_pod(out, section.id);
-            write_pod(out, section.size);
-            write_pod(out, section.checksum);
+            write_pod(out, section.id); write_pod(out, section.size); write_pod(out, section.checksum);
         }
-        for (std::size_t i = 0; i < sections.size(); ++i) {
-            append_file(out, section_paths[i], sections[i].size);
-        }
+        for (std::size_t i = 0; i < sections.size(); ++i) append_file(out, section_paths[i], sections[i].size);
         out.flush();
         if (!out) throw std::runtime_error("failed to flush temporary simulation checkpoint");
     }
 
     const auto validated = validate_container(publish_path);
-    if (validated.simulated_day != simulated_day()) {
-        throw std::runtime_error("temporary simulation checkpoint changed global day");
+    if (validated.simulated_day != simulated_day() || validated.version != kFormatVersion) {
+        throw std::runtime_error("temporary simulation checkpoint changed generation metadata");
     }
     sync_file(publish_path);
     publish_atomically(publish_path, path);
@@ -354,13 +406,13 @@ SimulationState SimulationState::load_checkpoint(const std::filesystem::path& pa
     const auto world_path = unique_auxiliary_path("load-world");
     const auto weather_path = unique_auxiliary_path("load-weather");
     const auto water_path = unique_auxiliary_path("load-water");
-    cleanup.add(world_path);
-    cleanup.add(weather_path);
-    cleanup.add(water_path);
+    const auto settlement_path = unique_auxiliary_path("load-settlements");
+    cleanup.add(world_path); cleanup.add(weather_path); cleanup.add(water_path); cleanup.add(settlement_path);
 
     extract_section(in, header.sections[0], world_path);
     extract_section(in, header.sections[1], weather_path);
     extract_section(in, header.sections[2], water_path);
+    if (header.version == kFormatVersion) extract_section(in, header.sections[3], settlement_path);
     char trailing{};
     if (in.read(&trailing, 1)) throw std::runtime_error("simulation checkpoint contains unexpected trailing data");
     if (!in.eof()) throw std::runtime_error("failed while validating simulation checkpoint end");
@@ -373,9 +425,13 @@ SimulationState SimulationState::load_checkpoint(const std::filesystem::path& pa
         water.simulated_day() != header.simulated_day) {
         throw std::runtime_error("simulation checkpoint global day does not match component clocks");
     }
+    auto settlements = header.version == kFormatVersion
+        ? load_settlement_state(world, header.simulated_day, settlement_path)
+        : SettlementState{};
 
     return SimulationState(
-        std::move(world), std::move(topology), std::move(weather), std::move(water));
+        std::move(world), std::move(topology), std::move(weather), std::move(water),
+        std::move(settlements));
 }
 
 } // namespace worldsim

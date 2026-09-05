@@ -14,6 +14,36 @@ typedef struct ws_simulation_day_report_v2 {
     ws_vegetation_step_report vegetation;
 } ws_simulation_day_report_v2;
 
+typedef struct ws_settlement {
+    uint64_t id;
+    int64_t regional_x;
+    int64_t regional_y;
+    double population;
+    int64_t founded_day;
+} ws_settlement;
+
+typedef struct ws_settlement_suitability {
+    double terrain_factor;
+    double water_factor;
+    double vegetation_factor;
+    double temperature_factor;
+    double disturbance_factor;
+    double environmental_capacity;
+} ws_settlement_suitability;
+
+typedef struct ws_settlement_step_report {
+    uint64_t settlement_count;
+    double population_before;
+    double population_after;
+    double environmental_capacity;
+} ws_settlement_step_report;
+
+typedef struct ws_simulation_day_report_v3 {
+    ws_weather_water_step_report environment;
+    ws_vegetation_step_report vegetation;
+    ws_settlement_step_report settlements;
+} ws_simulation_day_report_v3;
+
 WORLDSIM_API ws_simulation_state* ws_simulation_create(
     const ws_world_config* config,
     const ws_weather_parameters* weather_parameters,
@@ -24,6 +54,26 @@ WORLDSIM_API int64_t ws_simulation_simulated_day(const ws_simulation_state* stat
 WORLDSIM_API uint64_t ws_simulation_l0_cell_count(const ws_simulation_state* state);
 WORLDSIM_API uint64_t ws_simulation_materialized_patch_count(const ws_simulation_state* state);
 WORLDSIM_API uint64_t ws_simulation_refined_tile_count(const ws_simulation_state* state);
+WORLDSIM_API uint64_t ws_simulation_settlement_count(const ws_simulation_state* state);
+WORLDSIM_API int ws_simulation_copy_settlements(
+    const ws_simulation_state* state,
+    ws_settlement* out_settlements,
+    uint64_t capacity);
+WORLDSIM_API int ws_simulation_settlement(
+    const ws_simulation_state* state,
+    uint64_t id,
+    ws_settlement* out_settlement);
+WORLDSIM_API int ws_simulation_found_settlement(
+    ws_simulation_state* state,
+    int64_t regional_x,
+    int64_t regional_y,
+    double population,
+    uint64_t* out_id);
+WORLDSIM_API int ws_simulation_settlement_suitability(
+    const ws_simulation_state* state,
+    int64_t regional_x,
+    int64_t regional_y,
+    ws_settlement_suitability* out_suitability);
 WORLDSIM_API int ws_simulation_is_refined(
     const ws_simulation_state* state,
     int64_t climate_x,
@@ -81,6 +131,9 @@ WORLDSIM_API int ws_simulation_advance_day(
 WORLDSIM_API int ws_simulation_advance_day_v2(
     ws_simulation_state* state,
     ws_simulation_day_report_v2* out_report);
+WORLDSIM_API int ws_simulation_advance_day_v3(
+    ws_simulation_state* state,
+    ws_simulation_day_report_v3* out_report);
 WORLDSIM_API int ws_simulation_materialize_refined_water_tile(
     ws_simulation_state* state,
     int64_t climate_x,

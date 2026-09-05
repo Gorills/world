@@ -168,6 +168,34 @@ void copy_vegetation_report(
     out.disturbance_area_after_m2 = in.disturbance_area_after_m2;
 }
 
+void copy_settlement(const worldsim::Settlement& in, ws_settlement& out) {
+    out.id = in.id;
+    out.regional_x = in.regional_coord.x;
+    out.regional_y = in.regional_coord.y;
+    out.population = in.population;
+    out.founded_day = in.founded_day;
+}
+
+void copy_settlement_suitability(
+    const worldsim::SettlementSuitability& in,
+    ws_settlement_suitability& out) {
+    out.terrain_factor = in.terrain_factor;
+    out.water_factor = in.water_factor;
+    out.vegetation_factor = in.vegetation_factor;
+    out.temperature_factor = in.temperature_factor;
+    out.disturbance_factor = in.disturbance_factor;
+    out.environmental_capacity = in.environmental_capacity;
+}
+
+void copy_settlement_report(
+    const worldsim::SettlementStepReport& in,
+    ws_settlement_step_report& out) {
+    out.settlement_count = in.settlement_count;
+    out.population_before = in.population_before;
+    out.population_after = in.population_after;
+    out.environmental_capacity = in.environmental_capacity;
+}
+
 void copy_local_vegetation(
     const worldsim::LocalPatch& patch,
     ws_local_vegetation_cell* out_cells) {
@@ -226,6 +254,62 @@ uint64_t ws_simulation_materialized_patch_count(const ws_simulation_state* state
 uint64_t ws_simulation_refined_tile_count(const ws_simulation_state* state) {
     if (!state) return 0;
     return static_cast<uint64_t>(state->impl.water().refined_tile_count());
+}
+
+uint64_t ws_simulation_settlement_count(const ws_simulation_state* state) {
+    if (!state) return 0;
+    return static_cast<uint64_t>(state->impl.settlements().size());
+}
+
+int ws_simulation_copy_settlements(
+    const ws_simulation_state* state,
+    ws_settlement* out_settlements,
+    uint64_t capacity) {
+    return guarded([&] {
+        if (!state || !out_settlements) throw std::invalid_argument("state/out_settlements is null");
+        if (capacity < state->impl.settlements().size()) {
+            throw std::invalid_argument("settlement output capacity is too small");
+        }
+        for (std::size_t i = 0; i < state->impl.settlements().size(); ++i) {
+            copy_settlement(state->impl.settlements()[i], out_settlements[i]);
+        }
+    });
+}
+
+int ws_simulation_settlement(
+    const ws_simulation_state* state,
+    uint64_t id,
+    ws_settlement* out_settlement) {
+    return guarded([&] {
+        if (!state || !out_settlement) throw std::invalid_argument("state/out_settlement is null");
+        const auto* value = state->impl.settlement(id);
+        if (!value) throw std::invalid_argument("settlement id does not exist");
+        copy_settlement(*value, *out_settlement);
+    });
+}
+
+int ws_simulation_found_settlement(
+    ws_simulation_state* state,
+    int64_t regional_x,
+    int64_t regional_y,
+    double population,
+    uint64_t* out_id) {
+    return guarded([&] {
+        if (!state || !out_id) throw std::invalid_argument("state/out_id is null");
+        *out_id = state->impl.found_settlement({regional_x, regional_y}, population);
+    });
+}
+
+int ws_simulation_settlement_suitability(
+    const ws_simulation_state* state,
+    int64_t regional_x,
+    int64_t regional_y,
+    ws_settlement_suitability* out_suitability) {
+    return guarded([&] {
+        if (!state || !out_suitability) throw std::invalid_argument("state/out_suitability is null");
+        copy_settlement_suitability(
+            state->impl.settlement_suitability({regional_x, regional_y}), *out_suitability);
+    });
 }
 
 int ws_simulation_is_refined(
@@ -393,6 +477,19 @@ int ws_simulation_advance_day_v2(
         copy_weather_report(report.environment.weather, out_report->environment.weather);
         copy_water_report(report.environment.water, out_report->environment.water);
         copy_vegetation_report(report.vegetation, out_report->vegetation);
+    });
+}
+
+int ws_simulation_advance_day_v3(
+    ws_simulation_state* state,
+    ws_simulation_day_report_v3* out_report) {
+    return guarded([&] {
+        if (!state || !out_report) throw std::invalid_argument("state/out_report is null");
+        const auto report = state->impl.advance_day_full();
+        copy_weather_report(report.environment.weather, out_report->environment.weather);
+        copy_water_report(report.environment.water, out_report->environment.water);
+        copy_vegetation_report(report.vegetation, out_report->vegetation);
+        copy_settlement_report(report.settlements, out_report->settlements);
     });
 }
 
