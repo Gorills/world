@@ -2,6 +2,8 @@
 
 #include "worldsim/vegetation.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <stdexcept>
 #include <utility>
 
@@ -33,11 +35,13 @@ SimulationState::SimulationState(
     World world,
     ContinentalHydrologyResult topology,
     WeatherState weather,
-    MultiresolutionWaterState water)
+    MultiresolutionWaterState water,
+    SettlementState settlements)
     : world_(std::move(world)),
       topology_(std::move(topology)),
       weather_(std::move(weather)),
-      water_(std::move(water)) {
+      water_(std::move(water)),
+      settlements_(std::move(settlements)) {
     validate_invariants();
 }
 
@@ -76,6 +80,79 @@ void SimulationState::validate_invariants() const {
     }
 }
 
+SettlementId SimulationState::found_settlement(
+    CellCoord regional_coord,
+    double population) {
+    validate_invariants();
+    (void)world_.sample_region(regional_coord);
+    if (!std::isfinite(population) || population < 0.0) {
+        throw std::invalid_argument("settlement population must be finite and non-negative");
+    }
+    if (settlements_.settlement_at(regional_coord)) {
+        throw std::invalid_argument("regional cell already owns a settlement");
+    }
+
+    World staged_world = world_;
+    (void)staged_world.materialize_local_patch(regional_coord);
+    SettlementState staged_settlements = settlements_;
+    const auto id = staged_settlements.found(regional_coord, population, simulated_day());
+
+    world_.swap_local_history(staged_world);
+    settlements_.swap(staged_settlements);
+    validate_invariants();
+    return id;
+}
+
+SettlementSuitability SimulationState::settlement_suitability(CellCoord regional_coord) const {
+    validate_invariants();
+    const auto region = world_.sample_region(regional_coord);
+    const auto climate_coord = regional_to_climate(regional_coord, world_.config());
+    const auto weather_sample = sample_weather(weather_, climate_coord);
+
+    double soil_water_mm = 0.0;
+    if (water_.is_refined(climate_coord)) {
+        soil_water_mm = static_cast<double>(water_.refined_tile(climate_coord).cell(regional_coord).soil_water_mm);
+    } else {
+        soil_water_mm = static_cast<double>(water_.coarse_state().cell(climate_coord).soil_water_mm);
+    }
+    const double capacity_mm = std::max(1.0, static_cast<double>(water_.parameters().soil_capacity_mm));
+    const double saturation = std::clamp(soil_water_mm / capacity_mm, 0.0, 1.0);
+
+    double biomass = static_cast<double>(region.forest_potential);
+    double disturbance = 0.0;
+    if (const auto* patch = world_.find_local_patch(regional_coord)) {
+        biomass = 0.0;
+        disturbance = 0.0;
+        for (const auto& cell : patch->cells) {
+            biomass += static_cast<double>(cell.vegetation_biomass);
+            disturbance += static_cast<double>(cell.disturbance);
+        }
+        biomass /= static_cast<double>(patch->cells.size());
+        disturbance /= static_cast<double>(patch->cells.size());
+    }
+
+    // Simulation-scale heuristics only; these are intentionally bounded and are not
+    // empirical demographic calibration.
+    SettlementSuitability out;
+    out.terrain_factor = std::clamp(
+        1.0 - 0.60 * static_cast<double>(region.slope) -
+            0.25 * static_cast<double>(region.terrain_roughness),
+        0.20, 1.0);
+    out.water_factor = std::clamp(0.25 + 1.10 * saturation, 0.25, 1.0);
+    out.vegetation_factor = std::clamp(0.35 + 0.85 * biomass, 0.35, 1.0);
+    const double temperature_distance =
+        std::abs(static_cast<double>(weather_sample.mean_air_temperature_c) - 16.0);
+    out.temperature_factor = std::clamp(1.0 - temperature_distance / 35.0, 0.20, 1.0);
+    out.disturbance_factor = std::clamp(1.0 - 0.80 * disturbance, 0.20, 1.0);
+    constexpr double kBaseCapacity = 2500.0;
+    out.environmental_capacity = kBaseCapacity * out.terrain_factor * out.water_factor *
+        out.vegetation_factor * out.temperature_factor * out.disturbance_factor;
+    if (!std::isfinite(out.environmental_capacity) || out.environmental_capacity < 0.0) {
+        throw std::runtime_error("settlement environmental capacity is invalid");
+    }
+    return out;
+}
+
 std::vector<HydrometeorologicalForcing> SimulationState::refined_daily_forcing(
     CellCoord climate_coord) const {
     validate_invariants();
@@ -98,13 +175,43 @@ SimulationDayReport SimulationState::advance_day_full() {
     const auto vegetation_report =
         staged_world.advance_materialized_vegetation_day(vegetation_forcing);
 
+    SettlementState staged_settlements = settlements_;
+    SettlementStepReport settlement_report;
+    settlement_report.settlement_count =
+        static_cast<std::uint64_t>(staged_settlements.settlements().size());
+    for (const auto& value : settlements_.settlements()) {
+        settlement_report.population_before += value.population;
+        settlement_report.environmental_capacity +=
+            settlement_suitability(value.regional_coord).environmental_capacity;
+    }
+    auto next_values = staged_settlements.settlements();
+    staged_settlements = {};
+    for (auto value : next_values) {
+        const double capacity = settlement_suitability(value.regional_coord).environmental_capacity;
+        const double raw_delta = (capacity - value.population) * 0.001;
+        const double max_growth = std::max(0.25, capacity * 0.002);
+        const double max_decline = std::max(0.25, value.population * 0.002);
+        value.population = std::max(
+            0.0, value.population + std::clamp(raw_delta, -max_decline, max_growth));
+        if (!std::isfinite(value.population)) {
+            throw std::runtime_error("settlement population evolution became non-finite");
+        }
+        (void)staged_settlements.found(
+            value.regional_coord, value.population, value.founded_day);
+    }
+    settlement_report.population_after = 0.0;
+    for (const auto& value : staged_settlements.settlements()) {
+        settlement_report.population_after += value.population;
+    }
+
     const auto environment =
         advance_weather_multiresolution_water_day(world_, weather_, water_);
 
-    // No-throw sparse-history swap closes the generation atomically after weather/water commit.
+    // No-throw swaps close the unified generation only after environment commits.
     world_.swap_local_history(staged_world);
+    settlements_.swap(staged_settlements);
     validate_invariants();
-    return {environment, vegetation_report};
+    return {environment, vegetation_report, settlement_report};
 }
 
 WeatherWaterStepReport SimulationState::advance_day() {

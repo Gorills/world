@@ -1,6 +1,7 @@
 #pragma once
 
 #include "worldsim/multiresolution_water.hpp"
+#include "worldsim/settlements.hpp"
 #include "worldsim/weather.hpp"
 #include "worldsim/world.hpp"
 
@@ -13,6 +14,7 @@ namespace worldsim {
 struct SimulationDayReport {
     WeatherWaterStepReport environment;
     VegetationStepReport vegetation;
+    SettlementStepReport settlements;
 };
 
 // Owns the authoritative runtime state that must share one simulation generation.
@@ -38,6 +40,16 @@ public:
     [[nodiscard]] const ContinentalHydrologyResult& topology() const noexcept { return topology_; }
     [[nodiscard]] const WeatherState& weather() const noexcept { return weather_; }
     [[nodiscard]] const MultiresolutionWaterState& water() const noexcept { return water_; }
+    [[nodiscard]] const SettlementState& settlement_state() const noexcept { return settlements_; }
+    [[nodiscard]] const std::vector<Settlement>& settlements() const noexcept {
+        return settlements_.settlements();
+    }
+    [[nodiscard]] const Settlement* settlement(SettlementId id) const noexcept {
+        return settlements_.settlement(id);
+    }
+
+    SettlementId found_settlement(CellCoord regional_coord, double population = 100.0);
+    [[nodiscard]] SettlementSuitability settlement_suitability(CellCoord regional_coord) const;
 
     // Read-only current-day L1 forcing for an already-refined parent. This does not advance
     // weather, mutate water or materialize persistent state.
@@ -63,12 +75,14 @@ private:
     ContinentalHydrologyResult topology_;
     WeatherState weather_;
     MultiresolutionWaterState water_;
+    SettlementState settlements_;
 
     SimulationState(
         World world,
         ContinentalHydrologyResult topology,
         WeatherState weather,
-        MultiresolutionWaterState water);
+        MultiresolutionWaterState water,
+        SettlementState settlements = {});
 
     void validate_invariants() const;
 };

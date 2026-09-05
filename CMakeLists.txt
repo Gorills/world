@@ -1,11 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
-project(worldsim VERSION 0.14.0 LANGUAGES C CXX)
+project(worldsim VERSION 0.15.0 LANGUAGES C CXX)
 
 option(WORLDSIM_BUILD_TESTS "Build WorldSim tests" ON)
 
 add_library(worldsim
     src/world.cpp
     src/vegetation.cpp
+    src/settlements.cpp
     src/soil.cpp
     src/hydrology.cpp
     src/continental_hydrology.cpp
