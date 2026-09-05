@@ -15,6 +15,36 @@ cmake --build build
 This creates a pristine 128×128 km world and simulates 100 years without settlements.
 Animal populations are represented by biomass guilds, not individual agents.
 
+## Godot observer
+
+The `godot/` project adds a live 3D observer of this same C++ simulation: terrain,
+ecology and water/weather layers, a free camera, point inspection, time controls,
+and compound checkpoint save/load. No simulation is reimplemented in GDScript.
+
+Requires Godot 4.5 or newer, CMake 3.20+, Ninja, Python 3 and a C++20 compiler.
+The first observer configure downloads pinned official `godot-cpp` bindings;
+the headless core build has no Godot dependency.
+
+```bash
+cmake --preset godot
+cmake --build --preset godot
+godot --path godot --editor
+```
+
+Press **F5** to run the project, or run `godot --path godot` directly.
+Run `ctest --preset godot` for core and engine integration checks.
+See [the Godot development guide](docs/GODOT.md) for controls, checkpoint loading,
+offline builds, folder ownership and the visualization's resolution limits.
+
+```text
+include/worldsim/ + src/   Engine-independent simulation and public C/C++ APIs
+adapters/godot/            C++ GDExtension and pinned bindings build
+godot/                    Godot project, scenes, camera, terrain and observer UI
+tests/ + tests/godot/      Simulation and real Godot integration tests
+benchmarks/               World-scale performance and conservation checks
+docs/                     Models, architecture and development guides
+```
+
 ## Implemented
 
 - Whole-world autonomous plants, herbivores, carnivores, decomposition and conserved nitrogen.
@@ -302,6 +332,7 @@ Legacy focused solver paths remain available:
 
 ## Audits
 
+- `docs/AUDIT_DYNAMICS.md` — measured world evolution, river/water limitations and Godot observability fixes; includes a reproducible CSV audit.
 - `docs/AUDIT_v0.16.md` — autonomous ecosystem century tests, sanitizer results and Europe-scale verification.
 
 - `docs/AUDIT_v0.1.md` through `docs/AUDIT_v0.8.md` — earlier spatial/hydrology/soil/weather milestones.

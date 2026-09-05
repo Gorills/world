@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 project(worldsim VERSION 0.16.0 LANGUAGES C CXX)
 
 option(WORLDSIM_BUILD_TESTS "Build WorldSim tests" ON)
+option(WORLDSIM_BUILD_GODOT "Build the Godot 4 observer GDExtension" OFF)
 
 add_library(worldsim
     src/world.cpp
@@ -40,6 +41,10 @@ if(BUILD_SHARED_LIBS)
         # Windows so BUILD_SHARED_LIBS has the same usable target contract as Unix platforms.
         set_target_properties(worldsim PROPERTIES WINDOWS_EXPORT_ALL_SYMBOLS ON)
     endif()
+endif()
+
+if(WORLDSIM_BUILD_GODOT)
+    add_subdirectory(adapters/godot)
 endif()
 
 if(MSVC)

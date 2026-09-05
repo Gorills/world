@@ -135,7 +135,7 @@ Several original v0.4 limitations were intentionally resolved by later milestone
 Still-current material limitations include:
 
 - no frozen-soil effects, canopy interception, capillary rise, aquifer geometry, lateral groundwater flow, wetlands or floodplains;
-- no persistent channel storage/travel time or hydraulic water level;
+- the standalone L1 solver has no persistent channel storage: it routes channel inflow and local runoff through the tile within each substep. The unified multiresolution scheduler has owned conserved L0 channel storage since v0.11 and bounded per-reach travel time since v0.12; see [Channel transport](CHANNEL_TRANSPORT.md). Neither solver resolves hydraulic water level;
 - one vertically aggregated soil bucket;
 - rivers do not yet own width/depth/velocity/flood-stage hydraulic state;
 - authoritative weather remains L0-only, so standalone L1 weather downscaling is not yet defined.

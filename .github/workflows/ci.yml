@@ -69,3 +69,25 @@ jobs:
         run: cmake --build build --config Release
       - name: Test shared library consumers
         run: ctest --test-dir build -C Release --output-on-failure
+
+  godot-observer:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pinned Godot 4.5.2
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 --output /tmp/godot.zip https://github.com/godotengine/godot-builds/releases/download/4.5.2-stable/Godot_v4.5.2-stable_linux.x86_64.zip
+          echo 'e3ce6194b6d4d2dcef5e5b5136752c084d9d8b9071c10bc2d2011b947ec7439a257c8d23c541cb30699f16d9edea6dff36e6e84d2bec14a8fe9b4e9aacbe5a8d  /tmp/godot.zip' | sha512sum --check
+          unzip -q /tmp/godot.zip -d /tmp/worldsim-godot
+          chmod +x /tmp/worldsim-godot/Godot_v4.5.2-stable_linux.x86_64
+      - name: Configure observer
+        run: >-
+          cmake --preset godot -DCMAKE_C_FLAGS=-Werror -DCMAKE_CXX_FLAGS=-Werror
+          -DWORLDSIM_GODOT_EXECUTABLE=/tmp/worldsim-godot/Godot_v4.5.2-stable_linux.x86_64
+      - name: Build observer and simulation
+        run: cmake --build --preset godot
+      - name: Test simulation and real Godot integration
+        run: ctest --preset godot

@@ -123,6 +123,10 @@ int main() {
           "refined tile inherits the exact global integer day");
     check(state.channel_storage_m3(partial_parent) == parent_channel_before,
           "water refinement leaves parent L0 channel storage unchanged");
+    check(parent_before.last_routed_discharge_m3_s > 0.0f &&
+          state.coarse_state().cell(partial_parent).last_routed_discharge_m3_s ==
+              parent_before.last_routed_discharge_m3_s,
+          "water refinement preserves the last completed L0 channel discharge");
 
     const auto& coarse_after_materialize = state.coarse_state().cell(partial_parent);
     check(coarse_after_materialize.snow_water_equivalent_mm == 0.0f &&
@@ -167,6 +171,8 @@ int main() {
     check(state.channel_storage_m3(partial_parent) == parent_channel_before,
           "aggregation leaves parent L0 channel storage unchanged");
     const auto& parent_roundtrip = state.coarse_state().cell(partial_parent);
+    check(parent_roundtrip.last_routed_discharge_m3_s == parent_before.last_routed_discharge_m3_s,
+          "aggregation preserves the last completed L0 channel discharge");
     check(near(parent_roundtrip.snow_water_equivalent_mm, parent_before.snow_water_equivalent_mm, 1e-5) &&
           near(parent_roundtrip.surface_water_mm, parent_before.surface_water_mm, 1e-5) &&
           near(parent_roundtrip.soil_water_mm, parent_before.soil_water_mm, 1e-5) &&

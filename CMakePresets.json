@@ -1,0 +1,28 @@
+{
+  "version": 2,
+  "cmakeMinimumRequired": {"major": 3, "minor": 20, "patch": 0},
+  "configurePresets": [
+    {
+      "name": "core",
+      "displayName": "Headless simulation (Release)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build",
+      "cacheVariables": {"CMAKE_BUILD_TYPE": "Release"}
+    },
+    {
+      "name": "godot",
+      "displayName": "Godot observer and simulation (Release)",
+      "inherits": "core",
+      "binaryDir": "${sourceDir}/build-godot",
+      "cacheVariables": {"WORLDSIM_BUILD_GODOT": "ON"}
+    }
+  ],
+  "buildPresets": [
+    {"name": "core", "configurePreset": "core", "jobs": 4},
+    {"name": "godot", "configurePreset": "godot", "jobs": 4}
+  ],
+  "testPresets": [
+    {"name": "core", "configurePreset": "core", "output": {"outputOnFailure": true}},
+    {"name": "godot", "configurePreset": "godot", "output": {"outputOnFailure": true}}
+  ]
+}

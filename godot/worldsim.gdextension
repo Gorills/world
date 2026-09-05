@@ -1,0 +1,11 @@
+[configuration]
+entry_symbol = "worldsim_library_init"
+compatibility_minimum = "4.5"
+reloadable = false
+
+[libraries]
+linux.x86_64 = "res://bin/worldsim_godot.linux.x86_64.so"
+linux.arm64 = "res://bin/worldsim_godot.linux.arm64.so"
+windows.x86_64 = "res://bin/worldsim_godot.windows.x86_64.dll"
+windows.arm64 = "res://bin/worldsim_godot.windows.arm64.dll"
+macos = "res://bin/worldsim_godot.macos.dylib"

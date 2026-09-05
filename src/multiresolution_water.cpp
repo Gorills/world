@@ -554,7 +554,10 @@ const RefinedWaterTileState& materialize_refined_water_tile(
     if (!inserted) throw std::logic_error("refined water tile insertion unexpectedly collided");
 
     auto& coarse = state.coarse_cell_mutable(coarse_index);
+    // Channel ownership stays at L0, including its last completed-day release.
+    const float channel_discharge = coarse.last_routed_discharge_m3_s;
     coarse = {};
+    coarse.last_routed_discharge_m3_s = channel_discharge;
     return it->second.state;
 }
 
@@ -603,6 +606,7 @@ void aggregate_refined_water_tile(
     aggregated.surface_water_mm = static_cast<float>(volume_to_depth(surface_m3, parent_area));
     aggregated.soil_water_mm = static_cast<float>(volume_to_depth(soil_m3, parent_area));
     aggregated.groundwater_mm = static_cast<float>(volume_to_depth(groundwater_m3, parent_area));
+    aggregated.last_routed_discharge_m3_s = coarse_before.last_routed_discharge_m3_s;
     require_valid_storage(aggregated);
     const auto parent_soil = detail::scaled_soil_bucket_parameters(
         state.parameters(), state.coarse_soil_properties(coarse_index));

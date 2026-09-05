@@ -15,6 +15,10 @@ build.ninja
 *.dll
 *.exe
 *.ws
+*.wsc
+godot/.godot/
+godot/bin/*
+CMakeUserPresets.json
 .DS_Store
 .vscode/
 .idea/
