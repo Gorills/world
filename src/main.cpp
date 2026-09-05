@@ -30,6 +30,7 @@ void usage() {
         "  worldsim_cli watercycle <save.ws> <climate_x> <climate_y> <days>\n"
         "  worldsim_cli continental-water <save.ws> <days>\n"
         "  worldsim_cli weather-water <save.ws> <days>\n"
+        "  worldsim_cli simulation-new <checkpoint.wsc> <seed> <days>\n"
         "  worldsim_cli simulation-run <save.ws> <checkpoint.wsc> <days>\n"
         "  worldsim_cli simulation-resume <checkpoint.wsc> <days>\n";
 }
@@ -132,6 +133,7 @@ void run_simulation_and_checkpoint(
     }
 
     simulation.save_checkpoint(checkpoint);
+    const auto ecology = simulation.ecosystem().totals();
     const double mean_wet_fraction = days == 0
         ? 0.0
         : wet_fraction_sum / static_cast<double>(days);
@@ -140,6 +142,10 @@ void run_simulation_and_checkpoint(
               << "simulated_day=" << simulation.simulated_day() << "\n"
               << "advanced_days=" << days << "\n"
               << "l0_cells=" << simulation.water().coarse_state().cells().size() << "\n"
+              << "plant_carbon_kg=" << ecology.plant_carbon_kg << "\n"
+              << "herbivore_carbon_kg=" << ecology.herbivore_carbon_kg << "\n"
+              << "carnivore_carbon_kg=" << ecology.carnivore_carbon_kg << "\n"
+              << "ecosystem_nitrogen_kg=" << ecology.nitrogen_after_kg << "\n"
               << "refined_tiles=" << simulation.water().refined_tile_count() << "\n"
               << "materialized_patches=" << simulation.world().materialized_patch_count() << "\n"
               << "mean_wet_area_fraction=" << mean_wet_fraction << "\n"
@@ -216,6 +222,15 @@ int main(int argc, char** argv) {
             const auto tile = world.refine_authoritative_hydrology_tile(continent, climate, threshold, 0.25f);
             std::cout << "climate_cell=(" << climate.x << ',' << climate.y << ")\n";
             print_hydrology_summary(tile.hydrology);
+            return 0;
+        }
+
+        if (cmd == "simulation-new" && argc == 5) {
+            worldsim::WorldConfig cfg;
+            cfg.seed = parse_u32(argv[3]);
+            const int days = parse_simulation_days(argv[4]);
+            worldsim::SimulationState simulation(cfg);
+            run_simulation_and_checkpoint(simulation, days, argv[2]);
             return 0;
         }
 

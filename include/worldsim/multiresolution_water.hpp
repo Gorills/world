@@ -78,6 +78,9 @@ private:
         const World&, const MultiresolutionWaterState&, CellCoord, const ContinentalWaterForcing&);
     friend ContinentalWaterStepReport advance_multiresolution_water_day(
         const World&, MultiresolutionWaterState&, const std::vector<ContinentalWaterForcing>&);
+    friend ContinentalWaterStepReport advance_multiresolution_water_day(
+        const World&, MultiresolutionWaterState&, const std::vector<ContinentalWaterForcing>&,
+        const std::vector<float>&);
     friend void save_multiresolution_water_state(
         const MultiresolutionWaterState&, const std::filesystem::path&);
     friend MultiresolutionWaterState load_multiresolution_water_state(
@@ -113,6 +116,12 @@ void aggregate_refined_water_tile(
     const World& world,
     MultiresolutionWaterState& state,
     const std::vector<ContinentalWaterForcing>& forcing);
+
+// Canopy multiplier applied once to coarse and derived fine PET. Empty means 1.
+[[nodiscard]] ContinentalWaterStepReport advance_multiresolution_water_day(
+    const World& world, MultiresolutionWaterState& state,
+    const std::vector<ContinentalWaterForcing>& forcing,
+    const std::vector<float>& evapotranspiration_factors);
 
 // Dynamic water remains an explicit simulation state rather than becoming implicit World state.
 // This versioned file persists its exact global day, terrestrial stores, L0 channel storage and

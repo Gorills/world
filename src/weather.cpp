@@ -454,6 +454,12 @@ WeatherWaterStepReport advance_weather_multiresolution_water_day(
     const World& world,
     WeatherState& weather,
     MultiresolutionWaterState& water) {
+    return advance_weather_multiresolution_water_day(world, weather, water, {});
+}
+
+WeatherWaterStepReport advance_weather_multiresolution_water_day(
+    const World& world, WeatherState& weather, MultiresolutionWaterState& water,
+    const std::vector<float>& evapotranspiration_factors) {
     const auto& coarse = water.coarse_state();
     if (!same_config_identity(world.config(), weather.config()) ||
         !same_config_identity(weather.config(), water.config()) ||
@@ -467,7 +473,8 @@ WeatherWaterStepReport advance_weather_multiresolution_water_day(
     }
 
     auto pending = WeatherPendingDay::prepare(weather);
-    const auto water_report = advance_multiresolution_water_day(world, water, pending.forcing);
+    const auto water_report = advance_multiresolution_water_day(
+        world, water, pending.forcing, evapotranspiration_factors);
     if (water_report.day_after != pending.report.day_after) {
         throw std::logic_error("weather/multiresolution water step produced inconsistent next day");
     }

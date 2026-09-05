@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.16.0
+
+- Seed persistent L0 grass, shrub, tree, herbivore and carnivore biomass across all land.
+- Add resource-limited plant growth, shading, stress mortality, grazing, hunting,
+  animal maintenance, litter decomposition and conservative C/N transfers.
+- Add conservative dispersal and canopy feedback to coarse/refined water demand.
+- Stage ecology with the existing unified daily transaction and surface disturbance.
+- Add compound checkpoint v3 ecosystem state and deterministic v1/v2 migration.
+- Add C ABI ecosystem queries and advance_day_v4 without changing existing C PODs.
+- Add simulation-new CLI for unattended pristine worlds, ecosystem diagnostics,
+  century regression scenarios and Europe-scale exact ecosystem continuation checks.
+- Document model equations, units and uncalibrated/aggregate modeling assumptions.
+
 ## 0.15.0
 
 - Add sparse persistent settlement/entity authority to SimulationState.

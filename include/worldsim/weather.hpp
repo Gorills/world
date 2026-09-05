@@ -133,6 +133,10 @@ void save_weather_state(
     const WeatherState& state,
     const std::filesystem::path& path);
 
+[[nodiscard]] WeatherWaterStepReport advance_weather_multiresolution_water_day(
+    const World& world, WeatherState& weather, MultiresolutionWaterState& water,
+    const std::vector<float>& evapotranspiration_factors);
+
 [[nodiscard]] WeatherState load_weather_state(
     const World& world,
     const std::filesystem::path& path);

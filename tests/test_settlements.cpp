@@ -160,7 +160,9 @@ int main() {
                 sizeof(size));
             first_three_payload += size;
         }
-        const std::size_t v2_header = descriptors_offset + 4 * descriptor_bytes;
+        std::uint32_t current_count{};
+        std::memcpy(&current_count, bytes.data() + count_offset, sizeof(current_count));
+        const std::size_t v2_header = descriptors_offset + current_count * descriptor_bytes;
         const std::size_t v1_header = descriptors_offset + 3 * descriptor_bytes;
         std::vector<char> legacy_bytes;
         legacy_bytes.reserve(v1_header + static_cast<std::size_t>(first_three_payload));

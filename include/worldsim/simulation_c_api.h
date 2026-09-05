@@ -44,6 +44,50 @@ typedef struct ws_simulation_day_report_v3 {
     ws_settlement_step_report settlements;
 } ws_simulation_day_report_v3;
 
+/* Densities: kg C/m2 for organic pools, kg N/m2 for mineral nitrogen. */
+typedef struct ws_ecosystem_cell {
+    double grass_carbon;
+    double shrub_carbon;
+    double tree_carbon;
+    double herbivore_carbon;
+    double carnivore_carbon;
+    double litter_carbon;
+    double mineral_nitrogen;
+} ws_ecosystem_cell;
+
+typedef struct ws_ecosystem_step_report {
+    int64_t day_before;
+    int64_t day_after;
+    double carbon_before_kg;
+    double carbon_after_kg;
+    double photosynthesis_kg;
+    double respiration_kg;
+    double nitrogen_before_kg;
+    double nitrogen_after_kg;
+    double herbivory_kg;
+    double predation_kg;
+    double plant_carbon_kg;
+    double herbivore_carbon_kg;
+    double carnivore_carbon_kg;
+    double carbon_balance_error_kg;
+    double nitrogen_balance_error_kg;
+} ws_ecosystem_step_report;
+
+typedef struct ws_simulation_day_report_v4 {
+    ws_weather_water_step_report environment;
+    ws_vegetation_step_report vegetation;
+    ws_settlement_step_report settlements;
+    ws_ecosystem_step_report ecosystem;
+} ws_simulation_day_report_v4;
+
+WORLDSIM_API int ws_simulation_ecosystem_cell(
+    const ws_simulation_state* state, int64_t climate_x, int64_t climate_y,
+    ws_ecosystem_cell* out_cell);
+WORLDSIM_API int ws_simulation_ecosystem_totals(
+    const ws_simulation_state* state, ws_ecosystem_step_report* out_report);
+WORLDSIM_API int ws_simulation_advance_day_v4(
+    ws_simulation_state* state, ws_simulation_day_report_v4* out_report);
+
 WORLDSIM_API ws_simulation_state* ws_simulation_create(
     const ws_world_config* config,
     const ws_weather_parameters* weather_parameters,

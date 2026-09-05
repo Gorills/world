@@ -290,6 +290,7 @@ int main() {
     if (!same_weather_cell(simulation.weather(), loaded.weather(), refined_parents.front()) ||
         !same_refined_tile(simulation.water(), loaded.water(), refined_parents.front()) ||
         !same_channels(simulation.topology(), simulation.water(), loaded.water()) ||
+        simulation.ecosystem().cells() != loaded.ecosystem().cells() ||
         !same_settlements(simulation, loaded) ||
         !same_all_local_patches(simulation.world(), loaded.world(), vegetation_regions)) {
         throw std::runtime_error("simulation benchmark checkpoint state did not round-trip exactly");
@@ -304,6 +305,7 @@ int main() {
         !same_weather_cell(simulation.weather(), loaded.weather(), refined_parents.front()) ||
         !same_refined_tile(simulation.water(), loaded.water(), refined_parents.front()) ||
         !same_channels(simulation.topology(), simulation.water(), loaded.water()) ||
+        simulation.ecosystem().cells() != loaded.ecosystem().cells() ||
         !same_settlements(simulation, loaded) ||
         !same_all_local_patches(simulation.world(), loaded.world(), vegetation_regions)) {
         throw std::runtime_error("simulation benchmark checkpoint changed deterministic future evolution");

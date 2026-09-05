@@ -1,11 +1,12 @@
 cmake_minimum_required(VERSION 3.20)
-project(worldsim VERSION 0.15.0 LANGUAGES C CXX)
+project(worldsim VERSION 0.16.0 LANGUAGES C CXX)
 
 option(WORLDSIM_BUILD_TESTS "Build WorldSim tests" ON)
 
 add_library(worldsim
     src/world.cpp
     src/vegetation.cpp
+    src/ecosystem.cpp
     src/settlements.cpp
     src/soil.cpp
     src/hydrology.cpp
@@ -62,6 +63,14 @@ target_link_libraries(worldsim_simulation_benchmark PRIVATE worldsim::worldsim)
 
 if(WORLDSIM_BUILD_TESTS)
     enable_testing()
+    add_executable(worldsim_ecosystem_c_api_tests tests/test_ecosystem_c_api.c)
+    target_link_libraries(worldsim_ecosystem_c_api_tests PRIVATE worldsim::worldsim)
+    set_target_properties(worldsim_ecosystem_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
+    add_test(NAME worldsim_ecosystem_c_api_tests COMMAND worldsim_ecosystem_c_api_tests)
+    add_executable(worldsim_ecosystem_tests tests/test_ecosystem.cpp)
+    target_link_libraries(worldsim_ecosystem_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_ecosystem_tests COMMAND worldsim_ecosystem_tests)
+
     add_executable(worldsim_tests tests/test_world.cpp)
     target_link_libraries(worldsim_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_tests COMMAND worldsim_tests)
@@ -206,6 +215,11 @@ if(WORLDSIM_BUILD_TESTS)
     add_test(NAME worldsim_refined_atmospheric_forcing_c_api_tests
         COMMAND worldsim_refined_atmospheric_forcing_c_api_tests)
 
+    add_test(NAME worldsim_cli_ecosystem_new
+        COMMAND worldsim_cli simulation-new worldsim_cli_pristine.wsc 42 365)
+    add_test(NAME worldsim_cli_ecosystem_cleanup
+        COMMAND ${CMAKE_COMMAND} -E rm -f worldsim_cli_pristine.wsc)
+    set_tests_properties(worldsim_cli_ecosystem_cleanup PROPERTIES DEPENDS worldsim_cli_ecosystem_new)
     add_test(NAME worldsim_cli_simulation_demo
         COMMAND worldsim_cli demo worldsim_cli_simulation.ws)
     add_test(NAME worldsim_cli_simulation_run

@@ -27,9 +27,10 @@ namespace {
 
 constexpr std::array<char, 8> kMagic{'W','S','S','I','M','0','0','1'};
 constexpr std::uint32_t kLegacyFormatVersion = 1;
-constexpr std::uint32_t kFormatVersion = 2;
+constexpr std::uint32_t kFormatVersion = 3;
 constexpr std::uint32_t kLegacySectionCount = 3;
-constexpr std::uint32_t kSectionCount = 4;
+constexpr std::uint32_t kSectionCount = 5;
+constexpr std::uint32_t kEcosystemSection = 5;
 constexpr std::uint32_t kWorldSection = 1;
 constexpr std::uint32_t kWeatherSection = 2;
 constexpr std::uint32_t kWaterSection = 3;
@@ -223,7 +224,7 @@ CheckpointHeader read_header(std::istream& in, const std::filesystem::path& path
 
     CheckpointHeader header;
     read_pod(in, header.version);
-    if (header.version != kLegacyFormatVersion && header.version != kFormatVersion) {
+    if (header.version < kLegacyFormatVersion || header.version > kFormatVersion) {
         throw std::runtime_error("unsupported simulation checkpoint version");
     }
     read_pod(in, header.simulated_day);
@@ -231,7 +232,7 @@ CheckpointHeader read_header(std::istream& in, const std::filesystem::path& path
 
     std::uint32_t count{};
     read_pod(in, count);
-    const auto expected = header.version == kLegacyFormatVersion ? kLegacySectionCount : kSectionCount;
+    const auto expected = header.version == kLegacyFormatVersion ? kLegacySectionCount : (header.version == 2 ? 4u : kSectionCount);
     if (count != expected) throw std::runtime_error("simulation checkpoint section count is invalid");
     header.sections.resize(count);
     for (auto& section : header.sections) {
@@ -243,7 +244,8 @@ CheckpointHeader read_header(std::istream& in, const std::filesystem::path& path
     if (header.sections[0].id != kWorldSection ||
         header.sections[1].id != kWeatherSection ||
         header.sections[2].id != kWaterSection ||
-        (header.version == kFormatVersion && header.sections[3].id != kSettlementSection)) {
+        (header.version >= 2 && header.sections[3].id != kSettlementSection) ||
+        (header.version >= 3 && header.sections[4].id != kEcosystemSection)) {
         throw std::runtime_error("simulation checkpoint section order is invalid");
     }
 
@@ -350,6 +352,8 @@ void SimulationState::save_checkpoint(const std::filesystem::path& path) const {
     const auto weather_path = unique_auxiliary_path("weather");
     const auto water_path = unique_auxiliary_path("water");
     const auto settlement_path = unique_auxiliary_path("settlements");
+    const auto ecosystem_path = unique_auxiliary_path("ecosystem");
+    cleanup.add(ecosystem_path);
     const auto publish_path = unique_publish_path(path);
     cleanup.add(world_path); cleanup.add(weather_path); cleanup.add(water_path);
     cleanup.add(settlement_path); cleanup.add(publish_path);
@@ -358,14 +362,16 @@ void SimulationState::save_checkpoint(const std::filesystem::path& path) const {
     save_weather_state(weather_, weather_path);
     save_multiresolution_water_state(water_, water_path);
     save_settlement_state(settlements_, settlement_path);
+    ecosystem_.save(ecosystem_path);
 
     const std::array<std::filesystem::path, kSectionCount> section_paths{
-        world_path, weather_path, water_path, settlement_path};
+        world_path, weather_path, water_path, settlement_path, ecosystem_path};
     std::array<SectionDescriptor, kSectionCount> sections{};
     sections[0].id = kWorldSection;
     sections[1].id = kWeatherSection;
     sections[2].id = kWaterSection;
     sections[3].id = kSettlementSection;
+    sections[4].id = kEcosystemSection;
     for (std::size_t i = 0; i < sections.size(); ++i) {
         sections[i].size = std::filesystem::file_size(section_paths[i]);
         if (sections[i].size == 0) throw std::runtime_error("cannot checkpoint an empty simulation section");
@@ -407,12 +413,15 @@ SimulationState SimulationState::load_checkpoint(const std::filesystem::path& pa
     const auto weather_path = unique_auxiliary_path("load-weather");
     const auto water_path = unique_auxiliary_path("load-water");
     const auto settlement_path = unique_auxiliary_path("load-settlements");
+    const auto ecosystem_path = unique_auxiliary_path("load-ecosystem");
+    cleanup.add(ecosystem_path);
     cleanup.add(world_path); cleanup.add(weather_path); cleanup.add(water_path); cleanup.add(settlement_path);
 
     extract_section(in, header.sections[0], world_path);
     extract_section(in, header.sections[1], weather_path);
     extract_section(in, header.sections[2], water_path);
-    if (header.version == kFormatVersion) extract_section(in, header.sections[3], settlement_path);
+    if (header.version >= 2) extract_section(in, header.sections[3], settlement_path);
+    if (header.version >= 3) extract_section(in, header.sections[4], ecosystem_path);
     char trailing{};
     if (in.read(&trailing, 1)) throw std::runtime_error("simulation checkpoint contains unexpected trailing data");
     if (!in.eof()) throw std::runtime_error("failed while validating simulation checkpoint end");
@@ -425,13 +434,19 @@ SimulationState SimulationState::load_checkpoint(const std::filesystem::path& pa
         water.simulated_day() != header.simulated_day) {
         throw std::runtime_error("simulation checkpoint global day does not match component clocks");
     }
-    auto settlements = header.version == kFormatVersion
+    auto settlements = header.version >= 2
         ? load_settlement_state(world, header.simulated_day, settlement_path)
         : SettlementState{};
 
-    return SimulationState(
+    auto result = SimulationState(
         std::move(world), std::move(topology), std::move(weather), std::move(water),
         std::move(settlements));
+    if (header.version >= 3) {
+        result.ecosystem_ = EcosystemState::load(
+            result.world_, result.topology_, result.water_, ecosystem_path);
+    }
+    result.validate_invariants();
+    return result;
 }
 
 } // namespace worldsim

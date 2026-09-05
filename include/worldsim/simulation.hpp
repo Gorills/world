@@ -4,6 +4,7 @@
 #include "worldsim/settlements.hpp"
 #include "worldsim/weather.hpp"
 #include "worldsim/world.hpp"
+#include "worldsim/ecosystem.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -15,6 +16,7 @@ struct SimulationDayReport {
     WeatherWaterStepReport environment;
     VegetationStepReport vegetation;
     SettlementStepReport settlements;
+    EcosystemStepReport ecosystem;
 };
 
 // Owns the authoritative runtime state that must share one simulation generation.
@@ -40,6 +42,7 @@ public:
     [[nodiscard]] const ContinentalHydrologyResult& topology() const noexcept { return topology_; }
     [[nodiscard]] const WeatherState& weather() const noexcept { return weather_; }
     [[nodiscard]] const MultiresolutionWaterState& water() const noexcept { return water_; }
+    [[nodiscard]] const EcosystemState& ecosystem() const noexcept { return ecosystem_; }
     [[nodiscard]] const SettlementState& settlement_state() const noexcept { return settlements_; }
     [[nodiscard]] const std::vector<Settlement>& settlements() const noexcept {
         return settlements_.settlements();
@@ -76,6 +79,7 @@ private:
     WeatherState weather_;
     MultiresolutionWaterState water_;
     SettlementState settlements_;
+    EcosystemState ecosystem_;
 
     SimulationState(
         World world,

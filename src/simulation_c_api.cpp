@@ -71,6 +71,24 @@ worldsim::DynamicHydrologyParameters water_parameters_from_c(
     return out;
 }
 
+void copy_ecosystem_report(const worldsim::EcosystemStepReport& in, ws_ecosystem_step_report& out) {
+    out.day_before = in.day_before;
+    out.day_after = in.day_after;
+    out.carbon_before_kg = in.carbon_before_kg;
+    out.carbon_after_kg = in.carbon_after_kg;
+    out.photosynthesis_kg = in.photosynthesis_kg;
+    out.respiration_kg = in.respiration_kg;
+    out.nitrogen_before_kg = in.nitrogen_before_kg;
+    out.nitrogen_after_kg = in.nitrogen_after_kg;
+    out.herbivory_kg = in.herbivory_kg;
+    out.predation_kg = in.predation_kg;
+    out.plant_carbon_kg = in.plant_carbon_kg;
+    out.herbivore_carbon_kg = in.herbivore_carbon_kg;
+    out.carnivore_carbon_kg = in.carnivore_carbon_kg;
+    out.carbon_balance_error_kg = in.carbon_balance_error_kg;
+    out.nitrogen_balance_error_kg = in.nitrogen_balance_error_kg;
+}
+
 void copy_weather_report(const worldsim::WeatherStepReport& in, ws_weather_step_report& out) {
     out.day_before = in.day_before;
     out.day_after = in.day_after;
@@ -477,6 +495,38 @@ int ws_simulation_advance_day_v2(
         copy_weather_report(report.environment.weather, out_report->environment.weather);
         copy_water_report(report.environment.water, out_report->environment.water);
         copy_vegetation_report(report.vegetation, out_report->vegetation);
+    });
+}
+
+int ws_simulation_ecosystem_cell(
+    const ws_simulation_state* state, int64_t climate_x, int64_t climate_y,
+    ws_ecosystem_cell* out_cell) {
+    return guarded([&] {
+        if (!state || !out_cell) throw std::invalid_argument("state/out_cell is null");
+        const auto& c = state->impl.ecosystem().cell({climate_x, climate_y});
+        *out_cell = {c.grass_carbon, c.shrub_carbon, c.tree_carbon,
+            c.herbivore_carbon, c.carnivore_carbon, c.litter_carbon, c.mineral_nitrogen};
+    });
+}
+
+int ws_simulation_ecosystem_totals(
+    const ws_simulation_state* state, ws_ecosystem_step_report* out_report) {
+    return guarded([&] {
+        if (!state || !out_report) throw std::invalid_argument("state/out_report is null");
+        copy_ecosystem_report(state->impl.ecosystem().totals(), *out_report);
+    });
+}
+
+int ws_simulation_advance_day_v4(
+    ws_simulation_state* state, ws_simulation_day_report_v4* out_report) {
+    return guarded([&] {
+        if (!state || !out_report) throw std::invalid_argument("state/out_report is null");
+        const auto report = state->impl.advance_day_full();
+        copy_weather_report(report.environment.weather, out_report->environment.weather);
+        copy_water_report(report.environment.water, out_report->environment.water);
+        copy_vegetation_report(report.vegetation, out_report->vegetation);
+        copy_settlement_report(report.settlements, out_report->settlements);
+        copy_ecosystem_report(report.ecosystem, out_report->ecosystem);
     });
 }
 

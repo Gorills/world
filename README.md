@@ -1,9 +1,25 @@
-# WorldSim v0.14.0 — sparse persistent L2 vegetation
+# WorldSim v0.16.0 — autonomous terrestrial ecosystem
 
-Headless C++20 simulation core for a large persistent world. v0.14 adds disturbance-aware vegetation recovery to already-materialized 64 m L2 history while keeping whole-world weather/water compact and avoiding eager ecology allocation.
+Headless C++20 simulation core for a large persistent world. Every land cell now
+supports grass, shrubs, trees, herbivores, carnivores and nutrient recycling without
+player activity. Weather and conserved water drive ecology; vegetation feeds back
+into evapotranspiration. See [the ecosystem model](docs/ECOSYSTEM.md) for equations,
+units, persistence, tests and the limits of this aggregated model.
+
+```bash
+cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build build
+./build/worldsim_cli simulation-new pristine.wsc 42 36500
+```
+
+This creates a pristine 128×128 km world and simulates 100 years without settlements.
+Animal populations are represented by biomass guilds, not individual agents.
 
 ## Implemented
 
+- Whole-world autonomous plants, herbivores, carnivores, decomposition and conserved nitrogen.
+- Canopy feedback on coarse/refined water demand, area-conservative dispersal and ecological budget reports.
+- Ecosystem checkpoint v3, v1/v2 migration and additive C ABI `advance_day_v4`.
 - Engine-independent C++20 core (`worldsim`).
 - C ABI suitable for thin Unity/Godot/Unreal adapters.
 - Spatial hierarchy:
@@ -49,6 +65,8 @@ SimulationState
 ├── World                      authoritative sparse L2 disturbance + vegetation history
 ├── Continental topology       derived from World
 ├── WeatherState               authoritative transient atmosphere
+├── EcosystemState             authoritative L0 carbon/nitrogen pools
+├── SettlementState            sparse optional settlements
 └── MultiresolutionWaterState  authoritative conserved water
     ├── terrestrial L0/L1 stores
     └── persistent L0 channel storage
@@ -63,6 +81,7 @@ simulation.day
 == weather.day
 == multiresolution_water.day
 == every refined water tile day
+== ecosystem.day
 ```
 
 Vegetation forcing and the next sparse L2 history are staged from current-day weather/water first. Authoritative water/weather then advance atomically; only after that succeeds is staged local vegetation history committed with a no-throw swap. A rejected environmental step therefore cannot partially advance vegetation.
@@ -144,13 +163,15 @@ The v0.14 Europe fixture observes a maximum relative daily water-balance residua
 
 ## Compound persistence
 
-`SimulationState::save_checkpoint()` publishes one generation with exactly three authoritative sections:
+`SimulationState::save_checkpoint()` publishes one generation with five authoritative sections (compound format v3):
 
 1. World;
 2. Weather;
-3. Multiresolution Water.
+3. Multiresolution Water;
+4. Settlements;
+5. Ecosystem.
 
-Channel storage is part of the Multiresolution Water section; it is not a fourth persistence authority. Vegetation is part of the existing World L2 section; it is not a fourth simulation/checkpoint component. Continental topology is derived from World and is rebuilt on load rather than serialized.
+Channel storage is part of the Water section. Sparse L2 cover/disturbance remains in World; global plant and animal carbon and mineral nitrogen are owned by Ecosystem. Continental topology is derived from World and is rebuilt on load rather than serialized.
 
 World format v3 adds one persistent vegetation-biomass float per materialized L2 cell. v1/v2 local history preserves existing fields and derives initial biomass as disturbed forest potential on in-world land cells. Multiresolution-water format v6 remains unchanged: channel transport and refined atmospheric forcing are derived rather than serialized.
 
@@ -194,7 +215,7 @@ Weather, terrestrial dynamic water and channel storage start from their determin
 - Channel travel time uses a bounded synthetic daily heuristic from reach length, slope and accumulated discharge; it is not empirically calibrated river celerity.
 - The one-L0-edge-per-day scheduler cannot resolve real sub-daily flood-wave propagation even when a physical reach travel time would be much shorter than one day.
 - No channel capacity, flood-wave/backwater hydraulics, wetlands or floodplains.
-- Vegetation is one normalized live-cover/recovery proxy: no species, age structure, succession, seed dispersal, fire, nutrients, carbon pools or vegetation→hydrology feedback.
+- L2 vegetation remains a normalized local cover/recovery proxy. The global ecosystem adds three plant groups, two animal guilds, dispersal, carbon/N pools and canopy→water feedback; it does not yet resolve species, individual ages or fire.
 - No erosion or sediment feedback.
 
 ## Build
@@ -270,6 +291,7 @@ Legacy focused solver paths remain available:
 
 ## Documentation
 
+- `docs/ECOSYSTEM.md` — current autonomous ecology, budgets, water feedback, checkpoint v3 and century tests.
 - `docs/ARCHITECTURE.md` — current ownership and scheduling decisions.
 - `docs/SIMULATION.md` — unified lifecycle/checkpoint/C ABI/CLI contract introduced in v0.10 and extended by v0.11 water persistence.
 - `docs/CHANNEL_TRANSPORT.md` — current v0.12 persistent reach-aware channel ownership, routing and persistence contract.
@@ -280,6 +302,8 @@ Legacy focused solver paths remain available:
 
 ## Audits
 
+- `docs/AUDIT_v0.16.md` — autonomous ecosystem century tests, sanitizer results and Europe-scale verification.
+
 - `docs/AUDIT_v0.1.md` through `docs/AUDIT_v0.8.md` — earlier spatial/hydrology/soil/weather milestones.
 - `docs/AUDIT_v0.9.md` — selects unified simulation/checkpoint ownership.
 - `docs/AUDIT_v0.10.md` — validates the unified lifecycle and selects persistent channel transport.
@@ -288,12 +312,12 @@ Legacy focused solver paths remain available:
 - `docs/AUDIT_v0.13.md` — validates stateless conservative L1 forcing and v6 semantic migration.
 - `docs/AUDIT_v0.14.md` — validates sparse persistent vegetation, World v3 migration and unified checkpoint evolution.
 
-## Next bounded milestone
+## Autonomous ecosystem validation
 
-v0.14 establishes the first persistent ecology-facing state without making ecology global/eager. Further plant physics is deferred until a concrete consumer needs it.
-
-The next strongest product-level gap is now the entity/settlement layer that can consume terrain, weather, water, disturbance and vegetation. Deeper hydrology or richer ecology should be driven by requirements from that layer rather than added by default.
-
+The new regression suite runs three worlds for 100 years each, checks carbon,
+nitrogen and water balances, exercises drought/frost/starvation and validates exact
+checkpoint continuation. The Europe-scale benchmark includes complete ecosystem
+state comparisons. See `docs/ECOSYSTEM.md` for scope and limitations.
 
 ## v0.15 settlements
 

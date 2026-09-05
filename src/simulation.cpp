@@ -16,7 +16,8 @@ SimulationState::SimulationState(
     : world_(std::move(config)),
       topology_(world_.analyze_continental_hydrology()),
       weather_(make_weather_state(world_, weather_parameters)),
-      water_(make_multiresolution_water_state(world_, topology_, water_parameters)) {
+      water_(make_multiresolution_water_state(world_, topology_, water_parameters)),
+      ecosystem_(EcosystemState::create(world_, topology_, water_)) {
     validate_invariants();
 }
 
@@ -41,11 +42,15 @@ SimulationState::SimulationState(
       topology_(std::move(topology)),
       weather_(std::move(weather)),
       water_(std::move(water)),
-      settlements_(std::move(settlements)) {
+      settlements_(std::move(settlements)),
+      ecosystem_(EcosystemState::create(world_, topology_, water_, weather_.simulated_day())) {
     validate_invariants();
 }
 
 void SimulationState::validate_invariants() const {
+    if (ecosystem_.simulated_day() != weather_.simulated_day()) {
+        throw std::runtime_error("simulation ecosystem/environment clocks are inconsistent");
+    }
     if (weather_.simulated_day() != water_.simulated_day()) {
         throw std::runtime_error("simulation weather/water clocks are inconsistent");
     }
@@ -166,6 +171,9 @@ std::vector<HydrometeorologicalForcing> SimulationState::refined_daily_forcing(
 
 SimulationDayReport SimulationState::advance_day_full() {
     validate_invariants();
+    auto staged_ecosystem = ecosystem_;
+    const auto ecosystem_report = staged_ecosystem.advance_day(world_, weather_, water_);
+    const auto et_factors = ecosystem_.evapotranspiration_factors();
 
     // Vegetation consumes current-day atmosphere/water just like hydrology. Stage the entire
     // sparse local-history map first; if environmental advance rejects, World remains unchanged.
@@ -204,13 +212,14 @@ SimulationDayReport SimulationState::advance_day_full() {
     }
 
     const auto environment =
-        advance_weather_multiresolution_water_day(world_, weather_, water_);
+        advance_weather_multiresolution_water_day(world_, weather_, water_, et_factors);
 
     // No-throw swaps close the unified generation only after environment commits.
     world_.swap_local_history(staged_world);
     settlements_.swap(staged_settlements);
+    ecosystem_.swap(staged_ecosystem);
     validate_invariants();
-    return {environment, vegetation_report, settlement_report};
+    return {environment, vegetation_report, settlement_report, ecosystem_report};
 }
 
 WeatherWaterStepReport SimulationState::advance_day() {
@@ -237,7 +246,13 @@ std::size_t SimulationState::disturb_surface(
     WorldPosition max,
     float amount) {
     validate_invariants();
-    return world_.disturb_surface(min, max, amount);
+    World staged_world = world_;
+    const auto count = staged_world.disturb_surface(min, max, amount);
+    auto staged_ecosystem = ecosystem_;
+    if (count > 0) staged_ecosystem.apply_local_disturbance(world_, staged_world);
+    world_.swap_local_history(staged_world);
+    ecosystem_.swap(staged_ecosystem);
+    return count;
 }
 
 } // namespace worldsim

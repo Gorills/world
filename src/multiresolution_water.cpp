@@ -771,7 +771,21 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
     const World& world,
     MultiresolutionWaterState& state,
     const std::vector<ContinentalWaterForcing>& forcing) {
+    return advance_multiresolution_water_day(world, state, forcing, {});
+}
+
+ContinentalWaterStepReport advance_multiresolution_water_day(
+    const World& world, MultiresolutionWaterState& state,
+    const std::vector<ContinentalWaterForcing>& forcing,
+    const std::vector<float>& evapotranspiration_factors) {
     validate_world_state(world, state);
+    if (!evapotranspiration_factors.empty() && evapotranspiration_factors.size() != forcing.size()) {
+        throw std::invalid_argument("canopy factors must match the L0 grid");
+    }
+    for (const float factor : evapotranspiration_factors) {
+        if (!std::isfinite(factor) || factor < 0.0f || factor > 1.0f)
+            throw std::invalid_argument("canopy factor must be finite and in [0,1]");
+    }
     if (state.simulated_day() == std::numeric_limits<std::int64_t>::max()) {
         throw std::overflow_error("multiresolution water simulation day overflow");
     }
@@ -872,8 +886,11 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
         c.last_baseflow_mm = 0.0f;
         c.last_routed_discharge_m3_s = 0.0f;
         if (state.coarse_is_ocean(i) || state.is_refined(coord)) continue;
+        auto effective_forcing = forcing[i];
+        if (!evapotranspiration_factors.empty())
+            effective_forcing.potential_evapotranspiration_mm *= evapotranspiration_factors[i];
         local_runoff[i] = advance_coarse_bucket(
-            c, forcing[i], state.coarse_area_m2(i), state.parameters(), coarse_soil_buckets[i], report);
+            c, effective_forcing, state.coarse_area_m2(i), state.parameters(), coarse_soil_buckets[i], report);
     }
 
     // Release only channel storage that existed at the beginning of this day. Geometry changes
@@ -949,8 +966,12 @@ ContinentalWaterStepReport advance_multiresolution_water_day(
         detailed.simulated_days = 0.0;
         detailed.cells = owned.state.cells;
 
-        const auto detailed_forcing = derive_refined_atmospheric_forcing(
+        auto detailed_forcing = derive_refined_atmospheric_forcing(
             world, state, coord, forcing[i]);
+        if (!evapotranspiration_factors.empty()) {
+            for (auto& f : detailed_forcing)
+                f.potential_evapotranspiration_mm *= evapotranspiration_factors[i];
+        }
 
         std::vector<ExternalHydrologyInflow> external;
         const auto& by_cell = ingress.at(coord);
