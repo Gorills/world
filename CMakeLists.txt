@@ -104,6 +104,10 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_simulation_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_simulation_tests COMMAND worldsim_simulation_tests)
 
+    add_executable(worldsim_settlement_tests tests/test_settlements.cpp)
+    target_link_libraries(worldsim_settlement_tests PRIVATE worldsim::worldsim)
+    add_test(NAME worldsim_settlement_tests COMMAND worldsim_settlement_tests)
+
     add_executable(worldsim_simulation_migration_tests tests/test_simulation_migration.cpp)
     target_link_libraries(worldsim_simulation_migration_tests PRIVATE worldsim::worldsim)
     add_test(NAME worldsim_simulation_migration_tests COMMAND worldsim_simulation_migration_tests)
@@ -189,6 +193,11 @@ if(WORLDSIM_BUILD_TESTS)
     target_link_libraries(worldsim_simulation_c_api_tests PRIVATE worldsim::worldsim)
     set_target_properties(worldsim_simulation_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
     add_test(NAME worldsim_simulation_c_api_tests COMMAND worldsim_simulation_c_api_tests)
+
+    add_executable(worldsim_settlement_c_api_tests tests/test_settlements_c_api.c)
+    target_link_libraries(worldsim_settlement_c_api_tests PRIVATE worldsim::worldsim)
+    set_target_properties(worldsim_settlement_c_api_tests PROPERTIES LINKER_LANGUAGE CXX)
+    add_test(NAME worldsim_settlement_c_api_tests COMMAND worldsim_settlement_c_api_tests)
 
     add_executable(worldsim_refined_atmospheric_forcing_c_api_tests
         tests/test_refined_atmospheric_forcing_c_api.c)
