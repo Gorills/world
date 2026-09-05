@@ -74,6 +74,16 @@ int main() {
         check(invalid_population_threw && state.settlements().size() == 2,
               "non-finite founding population is rejected");
 
+        const auto settlement_count_before_invalid = state.settlements().size();
+        const auto patch_count_before_invalid = state.world().materialized_patch_count();
+        bool invalid_coord_threw = false;
+        try { (void)state.found_settlement({INT64_MAX, INT64_MAX}, 10.0); }
+        catch (const std::out_of_range&) { invalid_coord_threw = true; }
+        check(invalid_coord_threw &&
+              state.settlements().size() == settlement_count_before_invalid &&
+              state.world().materialized_patch_count() == patch_count_before_invalid,
+              "failed founding is atomic across entity and sparse World ownership");
+
         const auto before_disturbance = state.settlement_suitability({0, 0});
         const double s = static_cast<double>(cfg.regional_cell_m);
         check(state.disturb_surface({0.0, 0.0}, {s, s}, 0.8f) > 0,
@@ -90,6 +100,29 @@ int main() {
         check(water_factor_before >= 0.25 && water_factor_before <= 1.0 &&
               water_factor_after >= 0.25 && water_factor_after <= 1.0,
               "authoritative water contribution remains bounded");
+
+        double min_water_factor = 2.0;
+        double max_water_factor = -1.0;
+        double min_capacity = std::numeric_limits<double>::infinity();
+        double max_capacity = 0.0;
+        const auto patches_before_scan = state.world().materialized_patch_count();
+        const auto tiles_before_scan = state.water().refined_tile_count();
+        for (std::int64_t y = -32; y < 32; ++y) {
+            for (std::int64_t x = -32; x < 32; ++x) {
+                const auto suitability = state.settlement_suitability({x, y});
+                min_water_factor = std::min(min_water_factor, suitability.water_factor);
+                max_water_factor = std::max(max_water_factor, suitability.water_factor);
+                min_capacity = std::min(min_capacity, suitability.environmental_capacity);
+                max_capacity = std::max(max_capacity, suitability.environmental_capacity);
+            }
+        }
+        check(max_water_factor > min_water_factor,
+              "spatially different authoritative water availability affects suitability");
+        check(max_capacity > min_capacity && std::isfinite(min_capacity) && std::isfinite(max_capacity),
+              "favorable and unfavorable current environments produce different capacity");
+        check(state.world().materialized_patch_count() == patches_before_scan &&
+              state.water().refined_tile_count() == tiles_before_scan,
+              "wide read-only suitability scan does not materialize sparse state");
         for (const auto& value : state.settlements()) {
             check(std::isfinite(value.population) && value.population >= 0.0,
                   "population evolution remains finite and non-negative");
