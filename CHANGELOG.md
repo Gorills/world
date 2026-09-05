@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.15.0
+
+- Add sparse persistent settlement/entity authority to SimulationState.
+- Add bounded environment-driven settlement suitability and population evolution.
+- Add compound checkpoint v2 settlement persistence with v1 migration.
+- Add additive settlement C++/C ABI surfaces and advance_day_v3.
+- Extend focused regressions and Europe-scale unified checkpoint gate.
+
 ## 0.11.0
 
 ### Added
